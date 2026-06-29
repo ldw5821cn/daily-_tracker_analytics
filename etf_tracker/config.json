@@ -65,6 +65,30 @@
         "name": "卓胜微",
         "sector": "射频芯片",
         "reason": "射频前端龙头，5G模组国产替代"
+      },
+      {
+        "code": "688047",
+        "name": "龙芯中科",
+        "sector": "CPU",
+        "reason": "国产CPU自主指令集，龙架构生态建设"
+      },
+      {
+        "code": "300474",
+        "name": "景嘉微",
+        "sector": "GPU",
+        "reason": "国产GPU龙头，JM9系列图形芯片"
+      },
+      {
+        "code": "688072",
+        "name": "拓荆科技",
+        "sector": "半导体设备",
+        "reason": "薄膜沉积设备龙头，PECVD/SACVD/HDPCVD"
+      },
+      {
+        "code": "688082",
+        "name": "盛美上海",
+        "sector": "半导体设备",
+        "reason": "清洗设备龙头，单片/槽式清洗设备"
       }
     ]
   },
