@@ -1,0 +1,22 @@
+{
+  "etf_code": "516150",
+  "etf_name": "稀土ETF嘉实",
+  "tracking_industries": ["机器人", "人工智能", "AI", "芯片制造", "存储行业", "内存制造"],
+  "backtest_periods": [30, 60, 90],
+  "data_source": "akshare",
+  "wechat_push": {
+    "enabled": true,
+    "channel": "hermes"
+  },
+  "features": {
+    "minute_data": true,
+    "fund_flow": true,
+    "sector_comparison": true,
+    "margin_trading": true
+  },
+  "sector_comparison": {
+    "enabled": true,
+    "sector_name": "稀土永磁",
+    "leading_stocks": ["北方稀土", "中国稀土", "盛和资源", "广晟有色", "厦门钨业"]
+  }
+}

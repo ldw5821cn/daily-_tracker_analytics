@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 ETF 趋势跟踪与投资规划报告系统
-跟踪标的：516150 稀土永磁 ETF
-热点行业：机器人、AI、芯片制造、存储、内存
+支持配置化：可自定义跟踪的 ETF/股票、回测周期、数据源
 """
 
 import os
@@ -36,58 +35,217 @@ try:
 except ImportError:
     AKSHARE_AVAILABLE = False
 
-# ============ 配置 ============
-ETF_CODE = "516150"
-ETF_NAME = "稀土ETF嘉实"
-TRACKING_INDUSTRIES = ["机器人", "人工智能", "AI", "芯片制造", "存储行业", "内存制造"]
-BACKTEST_PERIODS = [30, 60, 90]
-DATA_DIR = "/home/zhihu/etf_tracker"
-REPORTS_DIR = f"{DATA_DIR}/reports"
 
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(REPORTS_DIR, exist_ok=True)
+# ============ 配置加载 ============
+
+class Config:
+    """配置管理器"""
+    
+    DEFAULT_CONFIG = {
+        "etf_code": "516150",
+        "etf_name": "稀土ETF嘉实",
+        "tracking_industries": ["机器人", "人工智能", "AI", "芯片制造", "存储行业", "内存制造"],
+        "backtest_periods": [30, 60, 90],
+        "data_source": "akshare",
+        "wechat_push": {
+            "enabled": True,
+            "channel": "hermes"
+        },
+        "features": {
+            "minute_data": True,
+            "fund_flow": True,
+            "sector_comparison": True,
+            "margin_trading": True
+        },
+        "sector_comparison": {
+            "enabled": True,
+            "sector_name": "稀土永磁",
+            "leading_stocks": ["北方稀土", "中国稀土", "盛和资源", "广晟有色", "厦门钨业"]
+        }
+    }
+    
+    def __init__(self, config_path: str = None):
+        self.config_path = config_path or os.path.join(os.path.dirname(__file__), "config.json")
+        self.config = self._load_config()
+        
+        # 提取常用配置
+        self.etf_code = self.config.get("etf_code", "516150")
+        self.etf_name = self.config.get("etf_name", "稀土ETF嘉实")
+        self.tracking_industries = self.config.get("tracking_industries", [])
+        self.backtest_periods = self.config.get("backtest_periods", [30, 60, 90])
+        self.data_source = self.config.get("data_source", "akshare")
+        self.features = self.config.get("features", {})
+        self.sector_config = self.config.get("sector_comparison", {})
+    
+    def _load_config(self) -> dict:
+        """加载配置文件"""
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"⚠️ 读取配置失败: {e}，使用默认配置")
+        return self.DEFAULT_CONFIG.copy()
+    
+    def save_config(self):
+        """保存配置到文件"""
+        with open(self.config_path, 'w', encoding='utf-8') as f:
+            json.dump(self.config, f, ensure_ascii=False, indent=2)
+    
+    def update(self, key: str, value):
+        """更新配置项"""
+        self.config[key] = value
+        # 更新实例属性
+        if hasattr(self, key):
+            setattr(self, key, value)
 
 
 # ============ 数据获取模块 ============
 
 class ETFDataFetcher:
-    """ETF 历史数据获取器 - 使用模型内置同花顺 iFinD 数据库"""
+    """ETF 历史数据获取器 - 支持多数据源"""
+    
+    def __init__(self, config: Config = None):
+        self.config = config or Config()
     
     @staticmethod
-    def get_kline_data_from_ifind(etf_code: str, days: int = 120) -> pd.DataFrame:
-        """使用模型内置同花顺 iFinD 数据库获取 ETF K线数据
+    def get_kline_data_from_akshare(etf_code: str, days: int = 120) -> pd.DataFrame:
+        """使用 AkShare 获取 ETF K线数据（A股专用，数据最丰富）"""
+        import akshare as ak
         
-        模型内置数据库能力:
-        - 同花顺 iFinD 金融数据库
-        - 支持 A 股、ETF、期货、期权等全品种
-        - 提供实时行情、历史K线、财务数据等
-        """
-        # 使用模型内置 iFinD 数据库查询
-        # 查询 516150 稀土ETF嘉实 的历史日K线数据
+        start_date = (datetime.now() - timedelta(days=days*2)).strftime('%Y%m%d')
         
-        # 构建 iFinD 查询请求
-        symbol = f"{etf_code}.SH"  # 上海交易所 ETF
+        print(f"  📡 正在从 AkShare 获取 {etf_code} 数据...")
         
-        # 通过模型内置数据库获取数据
-        # 这里使用模型能力直接查询 iFinD
-        print(f"  📡 正在从同花顺 iFinD 数据库获取 {etf_code} 数据...")
+        df = ak.fund_etf_hist_em(symbol=etf_code, period="daily", 
+                                  start_date=start_date, adjust="qfq")
         
-        # 模拟 iFinD 数据返回格式（实际由模型内置数据库提供）
-        # 返回: date, open, close, high, low, volume, amount
+        if len(df) == 0:
+            raise ValueError("AkShare 返回空数据")
         
-        # 由于当前网络问题，使用已保存的历史数据
-        import os
-        history_file = f"/home/zhihu/etf_tracker/{etf_code}_history.csv"
-        if os.path.exists(history_file):
-            df = pd.read_csv(history_file)
-            df['date'] = pd.to_datetime(df['date'])
-            # 确保数据足够
-            if len(df) >= days:
-                return df.tail(days).reset_index(drop=True)
-            else:
-                return df
+        df = df.rename(columns={
+            '日期': 'date', '开盘': 'open', '收盘': 'close',
+            '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
+        })
+        
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').reset_index(drop=True)
+        
+        if len(df) > days:
+            df = df.tail(days).reset_index(drop=True)
+        
+        print(f"  ✅ AkShare 数据获取成功: {len(df)} 条")
+        return df
+    
+    @staticmethod
+    def get_minute_data_from_akshare(etf_code: str, period: str = "1", days: int = 5) -> pd.DataFrame:
+        """使用 AkShare 获取 ETF 分钟级数据（用于高频回测）"""
+        import akshare as ak
+        
+        print(f"  📡 正在从 AkShare 获取 {etf_code} {period}分钟数据...")
+        
+        df = ak.fund_etf_hist_min_em(symbol=etf_code, period=period, adjust="qfq")
+        
+        if len(df) == 0:
+            raise ValueError("AkShare 返回空数据")
+        
+        df = df.rename(columns={
+            '时间': 'date', '开盘': 'open', '收盘': 'close',
+            '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
+        })
+        
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').reset_index(drop=True)
+        
+        # 截取最近N天
+        cutoff_date = datetime.now() - timedelta(days=days)
+        df = df[df['date'] >= cutoff_date].reset_index(drop=True)
+        
+        print(f"  ✅ AkShare 分钟数据获取成功: {len(df)} 条")
+        return df
+    
+    @staticmethod
+    def get_fund_flow_from_akshare(etf_code: str, market: str = "sh") -> pd.DataFrame:
+        """使用 AkShare 获取 ETF 资金流向数据"""
+        import akshare as ak
+        
+        print(f"  📡 正在从 AkShare 获取 {etf_code} 资金流向...")
+        
+        # 获取资金流向
+        df = ak.stock_individual_fund_flow(symbol=etf_code, market=market)
+        
+        if len(df) == 0:
+            raise ValueError("AkShare 返回空数据")
+        
+        print(f"  ✅ AkShare 资金流向获取成功: {len(df)} 条")
+        return df
+    
+    @staticmethod
+    def get_margin_trading_from_akshare(etf_code: str) -> pd.DataFrame:
+        """使用 AkShare 获取融资融券数据"""
+        import akshare as ak
+        
+        print(f"  📡 正在从 AkShare 获取 {etf_code} 融资融券数据...")
+        
+        # 获取融资融券数据
+        df = ak.stock_margin_detail_em(symbol=etf_code)
+        
+        if len(df) == 0:
+            raise ValueError("AkShare 返回空数据")
+        
+        print(f"  ✅ AkShare 融资融券数据获取成功: {len(df)} 条")
+        return df
+    
+    @staticmethod
+    def get_sector_data_from_akshare(sector_name: str = "稀土永磁") -> pd.DataFrame:
+        """使用 AkShare 获取行业板块数据"""
+        import akshare as ak
+        
+        print(f"  📡 正在从 AkShare 获取 {sector_name} 板块数据...")
+        
+        # 获取行业板块成分股
+        df = ak.stock_board_industry_name_em()
+        
+        # 查找相关板块
+        sector_df = df[df['板块名称'].str.contains(sector_name.replace('永磁', ''), na=False)]
+        
+        print(f"  ✅ AkShare 板块数据获取成功: {len(sector_df)} 个相关板块")
+        return sector_df
+    
+    @staticmethod
+    def get_stock_kline_from_akshare(stock_code: str, days: int = 120) -> pd.DataFrame:
+        """使用 AkShare 获取个股K线数据（用于板块对比）"""
+        import akshare as ak
+        
+        start_date = (datetime.now() - timedelta(days=days*2)).strftime('%Y%m%d')
+        
+        print(f"  📡 正在从 AkShare 获取 {stock_code} 个股数据...")
+        
+        # 判断市场
+        if stock_code.startswith('6'):
+            market = "sh"
         else:
-            raise FileNotFoundError(f"历史数据文件不存在: {history_file}")
+            market = "sz"
+        
+        df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
+                                 start_date=start_date, adjust="qfq")
+        
+        if len(df) == 0:
+            raise ValueError("AkShare 返回空数据")
+        
+        df = df.rename(columns={
+            '日期': 'date', '开盘': 'open', '收盘': 'close',
+            '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
+        })
+        
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').reset_index(drop=True)
+        
+        if len(df) > days:
+            df = df.tail(days).reset_index(drop=True)
+        
+        print(f"  ✅ AkShare 个股数据获取成功: {len(df)} 条")
+        return df
     
     @staticmethod
     def get_kline_data_eastmoney(secid: str, days: int = 120) -> pd.DataFrame:
@@ -130,97 +288,20 @@ class ETFDataFetcher:
                     raise e
     
     @staticmethod
-    def get_kline_data_from_akshare(etf_code: str, days: int = 120) -> pd.DataFrame:
-        """使用 AkShare 获取 ETF K线数据（A股专用，数据最丰富）"""
-        import akshare as ak
-        
-        # 计算起始日期
-        start_date = (datetime.now() - timedelta(days=days*2)).strftime('%Y%m%d')
-        
-        print(f"  📡 正在从 AkShare 获取 {etf_code} 数据...")
-        
-        # 获取 ETF 历史数据（前复权）
-        df = ak.fund_etf_hist_em(symbol=etf_code, period="daily", 
-                                  start_date=start_date, adjust="qfq")
-        
-        if len(df) == 0:
-            raise ValueError("AkShare 返回空数据")
-        
-        # 重命名列以匹配标准格式
-        df = df.rename(columns={
-            '日期': 'date', '开盘': 'open', '收盘': 'close',
-            '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
-        })
-        
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date').reset_index(drop=True)
-        
-        # 截取所需天数
-        if len(df) > days:
-            df = df.tail(days).reset_index(drop=True)
-        
-        print(f"  ✅ AkShare 数据获取成功: {len(df)} 条")
-        return df
+    def get_kline_data_from_ifind(etf_code: str, days: int = 120) -> pd.DataFrame:
+        """使用本地 CSV 作为回退"""
+        history_file = f"/home/zhihu/etf_tracker/{etf_code}_history.csv"
+        if os.path.exists(history_file):
+            df = pd.read_csv(history_file)
+            df['date'] = pd.to_datetime(df['date'])
+            if len(df) >= days:
+                return df.tail(days).reset_index(drop=True)
+            else:
+                return df
+        else:
+            raise FileNotFoundError(f"历史数据文件不存在: {history_file}")
     
-    @staticmethod
-    def get_minute_data_from_akshare(etf_code: str, period: str = "1") -> pd.DataFrame:
-        """使用 AkShare 获取 ETF 分钟级数据（用于高频回测）"""
-        import akshare as ak
-        
-        print(f"  📡 正在从 AkShare 获取 {etf_code} {period}分钟数据...")
-        
-        # 获取分钟级数据
-        df = ak.fund_etf_hist_min_em(symbol=etf_code, period=period, adjust="qfq")
-        
-        if len(df) == 0:
-            raise ValueError("AkShare 返回空数据")
-        
-        # 重命名列
-        df = df.rename(columns={
-            '时间': 'date', '开盘': 'open', '收盘': 'close',
-            '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
-        })
-        
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date').reset_index(drop=True)
-        
-        print(f"  ✅ AkShare 分钟数据获取成功: {len(df)} 条")
-        return df
-    
-    @staticmethod
-    def get_fund_flow_from_akshare(etf_code: str) -> pd.DataFrame:
-        """使用 AkShare 获取 ETF 资金流向数据"""
-        import akshare as ak
-        
-        print(f"  📡 正在从 AkShare 获取 {etf_code} 资金流向...")
-        
-        # 获取资金流向（需要转换为股票代码格式）
-        df = ak.stock_individual_fund_flow(symbol=etf_code, market="sh")
-        
-        if len(df) == 0:
-            raise ValueError("AkShare 返回空数据")
-        
-        print(f"  ✅ AkShare 资金流向获取成功: {len(df)} 条")
-        return df
-    
-    @staticmethod
-    def get_sector_data_from_akshare(sector_name: str = "稀土永磁") -> pd.DataFrame:
-        """使用 AkShare 获取行业板块数据"""
-        import akshare as ak
-        
-        print(f"  📡 正在从 AkShare 获取 {sector_name} 板块数据...")
-        
-        # 获取行业板块成分股
-        df = ak.stock_board_industry_name_em()
-        
-        # 查找稀土相关板块
-        sector_df = df[df['板块名称'].str.contains('稀土', na=False)]
-        
-        print(f"  ✅ AkShare 板块数据获取成功: {len(sector_df)} 个相关板块")
-        return sector_df
-    
-    @staticmethod
-    def get_kline_data(etf_code: str, days: int = 120) -> pd.DataFrame:
+    def get_kline_data(self, etf_code: str, days: int = 120) -> pd.DataFrame:
         """获取 ETF K线数据 - 多数据源优先级策略"""
         
         # 1. 优先使用 AkShare（A股数据最丰富）
@@ -330,6 +411,17 @@ class TechnicalIndicators:
     def volume_ma(df: pd.DataFrame, period: int = 20) -> pd.Series:
         """成交量均线"""
         return df['volume'].rolling(window=period).mean()
+    
+    @staticmethod
+    def kdj(df: pd.DataFrame, n: int = 9, m1: int = 3, m2: int = 3) -> Tuple[pd.Series, pd.Series, pd.Series]:
+        """KDJ 随机指标"""
+        low_list = df['low'].rolling(window=n, min_periods=n).min()
+        high_list = df['high'].rolling(window=n, min_periods=n).max()
+        rsv = (df['close'] - low_list) / (high_list - low_list) * 100
+        k = rsv.ewm(com=m1-1, adjust=False).mean()
+        d = k.ewm(com=m2-1, adjust=False).mean()
+        j = 3 * k - 2 * d
+        return k, d, j
 
 
 # ============ 回测模块 ============
@@ -353,6 +445,7 @@ class BacktestEngine:
         self.df['bb_upper'], self.df['bb_middle'], self.df['bb_lower'] = ti.bollinger_bands(self.df)
         self.df['atr14'] = ti.atr(self.df, 14)
         self.df['vol_ma20'] = ti.volume_ma(self.df, 20)
+        self.df['k'], self.df['d'], self.df['j'] = ti.kdj(self.df)
     
     def backtest_period(self, days: int) -> Dict:
         """回测指定周期"""
@@ -401,6 +494,9 @@ class BacktestEngine:
         # 布林带位置
         bb_position = (latest['close'] - latest['bb_lower']) / (latest['bb_upper'] - latest['bb_lower'])
         
+        # KDJ
+        kdj_signal = "超买" if latest['j'] > 80 else "超卖" if latest['j'] < 20 else "中性"
+        
         return {
             "period_days": days,
             "start_date": recent.iloc[0]['date'].strftime('%Y-%m-%d'),
@@ -415,20 +511,187 @@ class BacktestEngine:
             "avg_volume": int(recent['volume'].mean()),
             "latest_rsi": round(rsi_value, 2),
             "rsi_status": rsi_status,
-            "macd_signal": " bullish" if macd_bull else " bearish" if macd_bear else "neutral",
+            "macd_signal": "bullish" if macd_bull else "bearish" if macd_bear else "neutral",
             "ma_trend": "多头排列" if ma_bull else "空头排列" if ma_bear else "震荡",
             "bb_position": round(bb_position, 3),
             "atr14": round(latest['atr14'], 3),
-            "volume_ratio": round(latest['volume'] / latest['vol_ma20'], 2) if latest['vol_ma20'] > 0 else 0
+            "volume_ratio": round(latest['volume'] / latest['vol_ma20'], 2) if latest['vol_ma20'] > 0 else 0,
+            "kdj_j": round(latest['j'], 2),
+            "kdj_signal": kdj_signal
         }
     
-    def run_all_backtests(self) -> List[Dict]:
+    def run_all_backtests(self, periods: List[int] = None) -> List[Dict]:
         """运行所有周期回测"""
         results = []
-        for days in BACKTEST_PERIODS:
+        for days in (periods or [30, 60, 90]):
             result = self.backtest_period(days)
             results.append(result)
         return results
+
+
+# ============ 资金流向分析模块 ============
+
+class FundFlowAnalyzer:
+    """资金流向分析器"""
+    
+    @staticmethod
+    def analyze_fund_flow(etf_code: str) -> Dict:
+        """分析资金流向"""
+        try:
+            import akshare as ak
+            
+            # 获取近5日资金流向
+            df = ak.stock_individual_fund_flow(symbol=etf_code, market="sh")
+            
+            if len(df) == 0:
+                return {"error": "无资金流向数据"}
+            
+            # 计算汇总
+            latest = df.iloc[0]
+            
+            # 主力净流入（超大单+大单）
+            main_inflow = float(latest['主力净流入-净额']) if '主力净流入-净额' in latest else 0
+            
+            # 散户净流入（中单+小单）
+            retail_inflow = float(latest['小单净流入-净额']) if '小单净流入-净额' in latest else 0
+            
+            # 净流入占比
+            total_amount = float(latest['成交额']) if '成交额' in latest else 1
+            main_inflow_ratio = main_inflow / total_amount * 100 if total_amount > 0 else 0
+            
+            return {
+                "date": latest['日期'] if '日期' in latest else "",
+                "main_inflow": round(main_inflow / 10000, 2),  # 万元
+                "retail_inflow": round(retail_inflow / 10000, 2),
+                "main_inflow_ratio": round(main_inflow_ratio, 2),
+                "signal": "主力流入" if main_inflow > 0 else "主力流出",
+                "strength": "强" if abs(main_inflow_ratio) > 5 else "中" if abs(main_inflow_ratio) > 2 else "弱"
+            }
+        except Exception as e:
+            return {"error": str(e)}
+    
+    @staticmethod
+    def analyze_margin_trading(etf_code: str) -> Dict:
+        """分析融资融券数据"""
+        try:
+            import akshare as ak
+            
+            df = ak.stock_margin_detail_em(symbol=etf_code)
+            
+            if len(df) == 0:
+                return {"error": "无融资融券数据"}
+            
+            latest = df.iloc[0]
+            
+            # 融资余额
+            rz_balance = float(latest['融资余额']) if '融资余额' in latest else 0
+            # 融券余额
+            rq_balance = float(latest['融券余额']) if '融券余额' in latest else 0
+            # 融资融券余额
+            total_balance = rz_balance + rq_balance
+            
+            # 杠杆多空比
+            leverage_ratio = rz_balance / rq_balance if rq_balance > 0 else 0
+            
+            return {
+                "date": latest['日期'] if '日期' in latest else "",
+                "rz_balance": round(rz_balance / 10000, 2),  # 万元
+                "rq_balance": round(rq_balance / 10000, 2),
+                "total_balance": round(total_balance / 10000, 2),
+                "leverage_ratio": round(leverage_ratio, 2),
+                "signal": "融资增加" if rz_balance > 0 else "融资减少",
+                "sentiment": "看多" if leverage_ratio > 10 else "中性" if leverage_ratio > 5 else "谨慎"
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+
+# ============ 板块对比模块 ============
+
+class SectorComparison:
+    """板块对比分析器"""
+    
+    @staticmethod
+    def get_sector_leaders_performance(sector_config: dict) -> List[Dict]:
+        """获取板块龙头股表现"""
+        try:
+            import akshare as ak
+            
+            results = []
+            leading_stocks = sector_config.get("leading_stocks", [])
+            
+            # 获取股票代码映射（简化版，实际需要查询）
+            stock_mapping = {
+                "北方稀土": "600111",
+                "中国稀土": "000831",
+                "盛和资源": "600392",
+                "广晟有色": "600259",
+                "厦门钨业": "600549"
+            }
+            
+            for stock_name in leading_stocks:
+                stock_code = stock_mapping.get(stock_name)
+                if not stock_code:
+                    continue
+                
+                try:
+                    # 获取个股数据
+                    df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
+                                           start_date=(datetime.now() - timedelta(days=30)).strftime('%Y%m%d'),
+                                           adjust="qfq")
+                    
+                    if len(df) > 0:
+                        latest = df.iloc[-1]
+                        first = df.iloc[0]
+                        
+                        return_pct = (float(latest['收盘']) - float(first['收盘'])) / float(first['收盘']) * 100
+                        
+                        results.append({
+                            "name": stock_name,
+                            "code": stock_code,
+                            "latest_price": round(float(latest['收盘']), 2),
+                            "return_30d": round(return_pct, 2),
+                            "volume": int(latest['成交量']),
+                            "trend": "上涨" if return_pct > 0 else "下跌"
+                        })
+                except Exception as e:
+                    print(f"  ⚠️ 获取 {stock_name} 数据失败: {e}")
+                    continue
+            
+            return results
+        except Exception as e:
+            return [{"error": str(e)}]
+    
+    @staticmethod
+    def compare_with_etf(etf_code: str, sector_leaders: List[Dict]) -> Dict:
+        """对比 ETF 与板块龙头股"""
+        try:
+            import akshare as ak
+            
+            # 获取 ETF 同期表现
+            df = ak.fund_etf_hist_em(symbol=etf_code, period="daily", 
+                                      start_date=(datetime.now() - timedelta(days=30)).strftime('%Y%m%d'),
+                                      adjust="qfq")
+            
+            if len(df) > 0:
+                latest = df.iloc[-1]
+                first = df.iloc[0]
+                etf_return = (float(latest['收盘']) - float(first['收盘'])) / float(first['收盘']) * 100
+                
+                # 计算平均跑赢/跑输
+                leader_returns = [s['return_30d'] for s in sector_leaders if 'return_30d' in s]
+                avg_leader_return = sum(leader_returns) / len(leader_returns) if leader_returns else 0
+                
+                return {
+                    "etf_return_30d": round(etf_return, 2),
+                    "avg_leader_return": round(avg_leader_return, 2),
+                    "outperform": round(etf_return - avg_leader_return, 2),
+                    "conclusion": "ETF跑赢板块" if etf_return > avg_leader_return else "ETF跑输板块"
+                }
+            
+            return {"error": "无ETF数据"}
+        except Exception as e:
+            return {"error": str(e)}
 
 
 # ============ 信号生成模块 ============
@@ -436,11 +699,13 @@ class BacktestEngine:
 class SignalGenerator:
     """交易信号生成器"""
     
-    def __init__(self, backtest_results: List[Dict], df: pd.DataFrame):
+    def __init__(self, backtest_results: List[Dict], df: pd.DataFrame, 
+                 fund_flow: Dict = None, margin_data: Dict = None):
         self.results = backtest_results
         self.df = df
+        self.fund_flow = fund_flow or {}
+        self.margin_data = margin_data or {}
         self.latest = df.iloc[-1]
-        # 确保指标已计算
         self._ensure_indicators()
     
     def _ensure_indicators(self):
@@ -460,7 +725,8 @@ class SignalGenerator:
             self.df['atr14'] = ti.atr(self.df, 14)
         if 'vol_ma20' not in self.df.columns:
             self.df['vol_ma20'] = ti.volume_ma(self.df, 20)
-        # 重新获取最新行
+        if 'j' not in self.df.columns:
+            self.df['k'], self.df['d'], self.df['j'] = ti.kdj(self.df)
         self.latest = self.df.iloc[-1]
     
     def generate_signals(self) -> Dict:
@@ -546,14 +812,47 @@ class SignalGenerator:
             signals.append(f"📊 成交量正常 ({vol_ratio:.1f}x)")
         max_score += 1
         
+        # 7. KDJ 信号
+        j_value = self.latest['j']
+        if j_value < 20:
+            signals.append(f"✅ KDJ J值超卖 ({j_value:.1f})")
+            score += 1
+        elif j_value > 80:
+            signals.append(f"❌ KDJ J值超买 ({j_value:.1f})")
+            score -= 1
+        else:
+            signals.append(f"📊 KDJ J值中性 ({j_value:.1f})")
+        max_score += 1
+        
+        # 8. 资金流向（如果有）
+        if self.fund_flow and 'main_inflow' in self.fund_flow:
+            main_inflow = self.fund_flow['main_inflow']
+            if main_inflow > 0:
+                signals.append(f"✅ 主力资金净流入 {main_inflow}万元")
+                score += 1
+            else:
+                signals.append(f"❌ 主力资金净流出 {abs(main_inflow)}万元")
+                score -= 1
+            max_score += 1
+        
+        # 9. 融资融券（如果有）
+        if self.margin_data and 'leverage_ratio' in self.margin_data:
+            leverage = self.margin_data['leverage_ratio']
+            if leverage > 10:
+                signals.append(f"✅ 融资杠杆高 ({leverage:.1f}x)，市场情绪乐观")
+                score += 1
+            elif leverage < 5:
+                signals.append(f"⚠️ 融资杠杆低 ({leverage:.1f}x)，市场情绪谨慎")
+            max_score += 1
+        
         # 综合评分
         normalized_score = (score / max_score * 100) if max_score > 0 else 0
         
         if normalized_score >= 60:
-            overall = " bullish"
+            overall = "bullish"
             action = "建议关注买入机会"
         elif normalized_score <= -40:
-            overall = " bearish"
+            overall = "bearish"
             action = "建议减仓或观望"
         else:
             overall = "neutral"
@@ -571,12 +870,11 @@ class SignalGenerator:
         atr = self.latest['atr14']
         close = self.latest['close']
         
-        # 基于 ATR 的仓位管理
-        risk_per_trade = 0.02  # 单笔风险 2%
-        stop_loss = 2 * atr  # 2x ATR 止损
+        risk_per_trade = 0.02
+        stop_loss = 2 * atr
         
         position_size = risk_per_trade / (stop_loss / close) * 100
-        position_size = min(position_size, 100)  # 最大 100%
+        position_size = min(position_size, 100)
         
         return {
             "suggested_position": f"{position_size:.1f}%",
@@ -592,13 +890,17 @@ class SignalGenerator:
 class ReportGenerator:
     """投资规划报告生成器"""
     
-    def __init__(self, etf_code: str, etf_name: str):
-        self.etf_code = etf_code
-        self.etf_name = etf_name
+    def __init__(self, config: Config):
+        self.config = config
+        self.etf_code = config.etf_code
+        self.etf_name = config.etf_name
         self.date = datetime.now().strftime('%Y-%m-%d')
     
     def generate_report(self, backtest_results: List[Dict], signals: Dict, 
-                       position: Dict, df: pd.DataFrame, industry_news: str = "") -> str:
+                       position: Dict, df: pd.DataFrame, 
+                       fund_flow: Dict = None, margin_data: Dict = None,
+                       sector_comparison: Dict = None,
+                       industry_news: str = "") -> str:
         """生成完整的投资规划报告"""
         
         latest = df.iloc[-1]
@@ -606,8 +908,8 @@ class ReportGenerator:
         report = f"""# 📊 {self.etf_name} ({self.etf_code}) 投资规划报告
 
 > **报告日期**: {self.date}  
-> **数据来源**: 东方财富  
-> **分析周期**: 30天 / 60天 / 90天滚动回测
+> **数据来源**: AkShare + 东方财富  
+> **分析周期**: {'/'.join([str(p) for p in self.config.backtest_periods])}天滚动回测
 
 ---
 
@@ -643,6 +945,7 @@ class ReportGenerator:
 | 平均成交量 | {result['avg_volume']:,} | - |
 | RSI(14) | {result['latest_rsi']:.2f} ({result['rsi_status']}) | - |
 | MACD | {result['macd_signal']} | - |
+| KDJ J值 | {result['kdj_j']:.2f} ({result['kdj_signal']}) | - |
 | 均线趋势 | {result['ma_trend']} | - |
 | 布林带位置 | {result['bb_position']:.1%} | {'⚠️ 高位' if result['bb_position'] > 0.8 else '✅ 低位' if result['bb_position'] < 0.2 else '📊 中位'} |
 | ATR(14) | {result['atr14']} | - |
@@ -670,23 +973,68 @@ class ReportGenerator:
 ## 四、资金流向分析（AkShare）
 
 ### 主力资金动向
-- 主力净流入：待获取
-- 散户净流入：待获取
-- 超大单/大单/中单/小单分布：待获取
+"""
+        
+        if fund_flow and 'error' not in fund_flow:
+            report += f"""
+| 指标 | 数值 | 信号 |
+|------|------|------|
+| 日期 | {fund_flow.get('date', '-')} | - |
+| 主力净流入 | {fund_flow.get('main_inflow', 0)} 万元 | {fund_flow.get('signal', '-')} |
+| 散户净流入 | {fund_flow.get('retail_inflow', 0)} 万元 | - |
+| 主力净流入占比 | {fund_flow.get('main_inflow_ratio', 0)}% | 强度: {fund_flow.get('strength', '-')} |
 
+> 💡 **解读**: 主力资金{fund_flow.get('signal', '流向不明')}，{'建议跟随主力' if '流入' in fund_flow.get('signal', '') else '注意主力出货风险'}
+"""
+        else:
+            report += "\n> ⚠️ 资金流向数据暂不可用\n"
+        
+        report += f"""
 ### 融资融券数据
-- 融资余额：待获取
-- 融券余额：待获取
-- 杠杆多空比：待获取
+"""
+        
+        if margin_data and 'error' not in margin_data:
+            report += f"""
+| 指标 | 数值 | 信号 |
+|------|------|------|
+| 日期 | {margin_data.get('date', '-')} | - |
+| 融资余额 | {margin_data.get('rz_balance', 0)} 万元 | {margin_data.get('signal', '-')} |
+| 融券余额 | {margin_data.get('rq_balance', 0)} 万元 | - |
+| 融资融券余额 | {margin_data.get('total_balance', 0)} 万元 | - |
+| 杠杆多空比 | {margin_data.get('leverage_ratio', 0)}x | 情绪: {margin_data.get('sentiment', '-')} |
 
+> 💡 **解读**: 市场情绪{margin_data.get('sentiment', '不明')}，杠杆{margin_data.get('leverage_ratio', 0)}倍
+"""
+        else:
+            report += "\n> ⚠️ 融资融券数据暂不可用\n"
+        
+        report += f"""
 ---
 
 ## 五、稀土板块对比（AkShare）
 
 ### 板块内成分股表现
-- 北方稀土、中国稀土、盛和资源等龙头对比
-- 板块整体涨跌幅 vs 516150 ETF
-
+"""
+        
+        if sector_comparison and 'error' not in sector_comparison:
+            if 'leaders' in sector_comparison:
+                report += "\n| 股票 | 代码 | 最新价 | 30天收益 | 趋势 |\n"
+                report += "|------|------|--------|----------|------|\n"
+                for leader in sector_comparison['leaders']:
+                    if 'error' not in leader:
+                        report += f"| {leader.get('name', '-')} | {leader.get('code', '-')} | {leader.get('latest_price', '-')} | {leader.get('return_30d', 0):+.2f}% | {leader.get('trend', '-')} |\n"
+            
+            if 'etf_comparison' in sector_comparison:
+                comp = sector_comparison['etf_comparison']
+                report += f"\n### ETF vs 板块对比\n\n"
+                report += f"- ETF 30天收益: {comp.get('etf_return_30d', 0):+.2f}%\n"
+                report += f"- 板块平均收益: {comp.get('avg_leader_return', 0):+.2f}%\n"
+                report += f"- 相对表现: {comp.get('outperform', 0):+.2f}%\n"
+                report += f"- 结论: {comp.get('conclusion', '数据不足')}\n"
+        else:
+            report += "\n> ⚠️ 板块对比数据暂不可用\n"
+        
+        report += f"""
 ---
 
 ## 六、仓位管理建议
@@ -701,13 +1049,13 @@ class ReportGenerator:
 
 ---
 
-## 五、国际稀土市场动态
+## 七、国际稀土市场动态
 
 {industry_news if industry_news else "_待补充最新国际稀土市场动态、政策变化、供需数据等_"}
 
 ---
 
-## 六、热点行业跟踪
+## 八、热点行业跟踪
 
 ### 🤖 机器人行业
 - 关注人形机器人产业化进展
@@ -731,7 +1079,7 @@ class ReportGenerator:
 
 ---
 
-## 七、风险提示
+## 九、风险提示
 
 1. ⚠️ 稀土价格受国际地缘政治影响较大
 2. ⚠️ 新能源政策变化可能影响稀土需求预期
@@ -751,69 +1099,130 @@ class ReportGenerator:
 
 def main():
     """主程序：生成每日投资规划报告"""
+    
+    # 加载配置
+    config = Config()
+    
     print("=" * 60)
     print(f"🚀 ETF 趋势跟踪系统启动")
-    print(f"📊 目标标的: {ETF_NAME} ({ETF_CODE})")
+    print(f"📊 目标标的: {config.etf_name} ({config.etf_code})")
     print(f"📅 报告日期: {datetime.now().strftime('%Y-%m-%d')}")
+    print(f"⚙️  配置来源: {config.config_path}")
     print("=" * 60)
     
     # 1. 获取数据
     print("\n📥 正在获取历史数据...")
-    fetcher = ETFDataFetcher()
-    df = fetcher.get_kline_data(ETF_CODE, days=120)
+    fetcher = ETFDataFetcher(config)
+    df = fetcher.get_kline_data(config.etf_code, days=120)
     print(f"✅ 获取成功: {len(df)} 个交易日")
     
     # 2. 运行回测
     print("\n📊 正在运行多周期回测...")
     engine = BacktestEngine(df)
-    backtest_results = engine.run_all_backtests()
+    backtest_results = engine.run_all_backtests(config.backtest_periods)
     for result in backtest_results:
         print(f"  ✅ {result['period_days']}天回测完成: 收益 {result['total_return']:+.2f}%")
     
-    # 3. 生成信号
+    # 3. 获取资金流向（如果启用）
+    fund_flow = None
+    margin_data = None
+    if config.features.get("fund_flow", False):
+        print("\n💰 正在获取资金流向...")
+        try:
+            fund_flow = FundFlowAnalyzer.analyze_fund_flow(config.etf_code)
+            print(f"  ✅ 资金流向: {fund_flow.get('signal', '未知')}")
+        except Exception as e:
+            print(f"  ⚠️ 资金流向获取失败: {e}")
+        
+        print("\n📈 正在获取融资融券数据...")
+        try:
+            margin_data = FundFlowAnalyzer.analyze_margin_trading(config.etf_code)
+            print(f"  ✅ 融资融券: {margin_data.get('sentiment', '未知')}")
+        except Exception as e:
+            print(f"  ⚠️ 融资融券获取失败: {e}")
+    
+    # 4. 获取板块对比（如果启用）
+    sector_comparison = None
+    if config.features.get("sector_comparison", False) and config.sector_config.get("enabled", False):
+        print("\n🏭 正在获取板块对比数据...")
+        try:
+            sector_leaders = SectorComparison.get_sector_leaders_performance(config.sector_config)
+            etf_comparison = SectorComparison.compare_with_etf(config.etf_code, sector_leaders)
+            sector_comparison = {
+                "leaders": sector_leaders,
+                "etf_comparison": etf_comparison
+            }
+            print(f"  ✅ 板块对比完成: {len(sector_leaders)} 只龙头股")
+        except Exception as e:
+            print(f"  ⚠️ 板块对比获取失败: {e}")
+    
+    # 5. 生成信号
     print("\n🔍 正在生成交易信号...")
-    signal_gen = SignalGenerator(backtest_results, df)
+    signal_gen = SignalGenerator(backtest_results, df, fund_flow, margin_data)
     signals = signal_gen.generate_signals()
     position = signal_gen.calculate_position_sizing()
     print(f"  ✅ 综合评分: {signals['score']}/100 ({signals['overall']})")
     
     # 获取行业新闻
     print("\n📰 正在获取行业动态...")
-    from industry_news import IndustryNewsTracker
-    news_tracker = IndustryNewsTracker()
-    industry_news = news_tracker.get_daily_news_summary()
-    print("✅ 行业动态获取完成")
+    try:
+        from industry_news import IndustryNewsTracker
+        news_tracker = IndustryNewsTracker()
+        industry_news = news_tracker.get_daily_news_summary()
+        print("✅ 行业动态获取完成")
+    except Exception as e:
+        print(f"⚠️ 行业动态获取失败: {e}")
+        industry_news = ""
     
-    # 4. 生成报告（包含行业新闻）
+    # 6. 生成报告
     print("\n📝 正在生成投资规划报告...")
-    report_gen = ReportGenerator(ETF_CODE, ETF_NAME)
-    report = report_gen.generate_report(backtest_results, signals, position, df, industry_news)
+    report_gen = ReportGenerator(config)
+    report = report_gen.generate_report(
+        backtest_results, signals, position, df,
+        fund_flow=fund_flow,
+        margin_data=margin_data,
+        sector_comparison=sector_comparison,
+        industry_news=industry_news
+    )
     
-    # 5. 保存报告
-    report_path = f"{REPORTS_DIR}/report_{datetime.now().strftime('%Y%m%d')}.md"
+    # 7. 保存报告
+    report_path = f"{config.config.get('data_dir', '/home/zhihu/etf_tracker')}/reports/report_{datetime.now().strftime('%Y%m%d')}.md"
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(report)
     print(f"✅ 报告已保存: {report_path}")
     
-    # 6. 保存数据
-    data_path = f"{DATA_DIR}/516150_history.csv"
+    # 8. 保存数据
+    data_path = f"/home/zhihu/etf_tracker/{config.etf_code}_history.csv"
     df.to_csv(data_path, index=False)
     print(f"✅ 数据已保存: {data_path}")
     
-    # 7. 微信推送
-    print("\n📱 正在推送微信通知...")
-    try:
-        from wechat_pusher import send_daily_report
-        send_daily_report(
-            report_path=report_path,
-            etf_name=ETF_NAME,
-            etf_code=ETF_CODE,
-            score=signals['score'],
-            signal=signals['overall'],
-            action=signals['action']
-        )
-    except Exception as e:
-        print(f"⚠️ 微信推送失败: {e}")
+    # 9. 微信推送
+    if config.config.get("wechat_push", {}).get("enabled", False):
+        print("\n📱 正在推送微信通知...")
+        try:
+            if config.config.get("wechat_push", {}).get("channel") == "hermes":
+                from hermes_wechat_pusher import send_daily_report
+                send_daily_report(
+                    report_path=report_path,
+                    etf_name=config.etf_name,
+                    etf_code=config.etf_code,
+                    score=signals['score'],
+                    signal=signals['overall'],
+                    action=signals['action']
+                )
+            else:
+                from wechat_pusher import send_daily_report
+                send_daily_report(
+                    report_path=report_path,
+                    etf_name=config.etf_name,
+                    etf_code=config.etf_code,
+                    score=signals['score'],
+                    signal=signals['overall'],
+                    action=signals['action']
+                )
+        except Exception as e:
+            print(f"⚠️ 微信推送失败: {e}")
     
     print("\n" + "=" * 60)
     print("🎉 报告生成完成!")
