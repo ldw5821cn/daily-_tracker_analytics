@@ -21,7 +21,6 @@ try:
     IFIND_AVAILABLE = True
 except ImportError:
     IFIND_AVAILABLE = False
-    print("⚠️ iFinD Python API 未安装，将使用备用数据源")
 
 # 尝试使用 yfinance 作为备用
 try:
@@ -30,7 +29,7 @@ try:
 except ImportError:
     YFINANCE_AVAILABLE = False
 
-# 尝试使用 akshare 作为备用
+# 尝试使用 akshare 作为备用（A股数据最丰富）
 try:
     import akshare as ak
     AKSHARE_AVAILABLE = True
@@ -131,10 +130,108 @@ class ETFDataFetcher:
                     raise e
     
     @staticmethod
+    def get_kline_data_from_akshare(etf_code: str, days: int = 120) -> pd.DataFrame:
+        """使用 AkShare 获取 ETF K线数据（A股专用，数据最丰富）"""
+        import akshare as ak
+        
+        # 计算起始日期
+        start_date = (datetime.now() - timedelta(days=days*2)).strftime('%Y%m%d')
+        
+        print(f"  📡 正在从 AkShare 获取 {etf_code} 数据...")
+        
+        # 获取 ETF 历史数据（前复权）
+        df = ak.fund_etf_hist_em(symbol=etf_code, period="daily", 
+                                  start_date=start_date, adjust="qfq")
+        
+        if len(df) == 0:
+            raise ValueError("AkShare 返回空数据")
+        
+        # 重命名列以匹配标准格式
+        df = df.rename(columns={
+            '日期': 'date', '开盘': 'open', '收盘': 'close',
+            '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
+        })
+        
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').reset_index(drop=True)
+        
+        # 截取所需天数
+        if len(df) > days:
+            df = df.tail(days).reset_index(drop=True)
+        
+        print(f"  ✅ AkShare 数据获取成功: {len(df)} 条")
+        return df
+    
+    @staticmethod
+    def get_minute_data_from_akshare(etf_code: str, period: str = "1") -> pd.DataFrame:
+        """使用 AkShare 获取 ETF 分钟级数据（用于高频回测）"""
+        import akshare as ak
+        
+        print(f"  📡 正在从 AkShare 获取 {etf_code} {period}分钟数据...")
+        
+        # 获取分钟级数据
+        df = ak.fund_etf_hist_min_em(symbol=etf_code, period=period, adjust="qfq")
+        
+        if len(df) == 0:
+            raise ValueError("AkShare 返回空数据")
+        
+        # 重命名列
+        df = df.rename(columns={
+            '时间': 'date', '开盘': 'open', '收盘': 'close',
+            '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
+        })
+        
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').reset_index(drop=True)
+        
+        print(f"  ✅ AkShare 分钟数据获取成功: {len(df)} 条")
+        return df
+    
+    @staticmethod
+    def get_fund_flow_from_akshare(etf_code: str) -> pd.DataFrame:
+        """使用 AkShare 获取 ETF 资金流向数据"""
+        import akshare as ak
+        
+        print(f"  📡 正在从 AkShare 获取 {etf_code} 资金流向...")
+        
+        # 获取资金流向（需要转换为股票代码格式）
+        df = ak.stock_individual_fund_flow(symbol=etf_code, market="sh")
+        
+        if len(df) == 0:
+            raise ValueError("AkShare 返回空数据")
+        
+        print(f"  ✅ AkShare 资金流向获取成功: {len(df)} 条")
+        return df
+    
+    @staticmethod
+    def get_sector_data_from_akshare(sector_name: str = "稀土永磁") -> pd.DataFrame:
+        """使用 AkShare 获取行业板块数据"""
+        import akshare as ak
+        
+        print(f"  📡 正在从 AkShare 获取 {sector_name} 板块数据...")
+        
+        # 获取行业板块成分股
+        df = ak.stock_board_industry_name_em()
+        
+        # 查找稀土相关板块
+        sector_df = df[df['板块名称'].str.contains('稀土', na=False)]
+        
+        print(f"  ✅ AkShare 板块数据获取成功: {len(sector_df)} 个相关板块")
+        return sector_df
+    
+    @staticmethod
     def get_kline_data(etf_code: str, days: int = 120) -> pd.DataFrame:
         """获取 ETF K线数据 - 多数据源优先级策略"""
         
-        # 1. 优先使用东方财富 API（最稳定）
+        # 1. 优先使用 AkShare（A股数据最丰富）
+        if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE:
+            try:
+                df = ETFDataFetcher.get_kline_data_from_akshare(etf_code, days)
+                return df
+            except Exception as e:
+                print(f"  ⚠️ AkShare 获取失败: {e}")
+        
+        # 2. 备用：东方财富 API
         try:
             print(f"  📡 正在从东方财富获取 {etf_code} 数据...")
             secid = f"1.{etf_code}"  # 1=上海, 0=深圳
@@ -144,7 +241,7 @@ class ETFDataFetcher:
         except Exception as e:
             print(f"  ⚠️ 东方财富获取失败: {e}")
         
-        # 2. 尝试使用本地 CSV 缓存
+        # 3. 尝试使用本地 CSV 缓存
         try:
             print(f"  📂 尝试使用本地 CSV 缓存...")
             df = ETFDataFetcher.get_kline_data_from_ifind(etf_code, days)
@@ -152,25 +249,6 @@ class ETFDataFetcher:
             return df
         except Exception as e:
             print(f"  ⚠️ 本地 CSV 获取失败: {e}")
-        
-        # 3. 尝试使用 akshare（A股专用）
-        if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE:
-            try:
-                print(f"  📡 正在从 akshare 获取 {etf_code} 数据...")
-                import akshare as ak
-                df = ak.fund_etf_hist_em(symbol=etf_code, period="daily", 
-                                          start_date="20240101", adjust="qfq")
-                if len(df) >= days:
-                    df = df.tail(days).reset_index(drop=True)
-                df = df.rename(columns={
-                    '日期': 'date', '开盘': 'open', '收盘': 'close',
-                    '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
-                })
-                df['date'] = pd.to_datetime(df['date'])
-                print(f"  ✅ akshare 数据获取成功: {len(df)} 条")
-                return df
-            except Exception as e:
-                print(f"  ⚠️ akshare 获取失败: {e}")
         
         # 4. 尝试使用 yfinance（国际数据源）
         if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
@@ -589,7 +667,29 @@ class ReportGenerator:
 
 ---
 
-## 四、仓位管理建议
+## 四、资金流向分析（AkShare）
+
+### 主力资金动向
+- 主力净流入：待获取
+- 散户净流入：待获取
+- 超大单/大单/中单/小单分布：待获取
+
+### 融资融券数据
+- 融资余额：待获取
+- 融券余额：待获取
+- 杠杆多空比：待获取
+
+---
+
+## 五、稀土板块对比（AkShare）
+
+### 板块内成分股表现
+- 北方稀土、中国稀土、盛和资源等龙头对比
+- 板块整体涨跌幅 vs 516150 ETF
+
+---
+
+## 六、仓位管理建议
 
 | 项目 | 建议值 |
 |------|--------|
@@ -641,7 +741,7 @@ class ReportGenerator:
 ---
 
 *报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*  
-*数据来源: 东方财富 | 分析框架: 多因子量化模型*
+*数据来源: AkShare + 东方财富 | 分析框架: 多因子量化模型*
 """
         
         return report
