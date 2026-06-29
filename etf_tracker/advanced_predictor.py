@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-高级预测与预警模块
-功能：
-1. 趋势预测（1日/3日/5日）
-2. 自动预警（评分>80或RSI>70时提醒）
-3. 策略优化（根据实际趋势调整权重）
-4. K线图生成
-5. 资金流向趋势图
+高级预测与预警模块 - 完整增强版
+功能:
+1. 趋势预测（1日/3日/5日）+ 准确率回测
+2. 自动预警（评分>80、RSI>70、跌破均线、MACD死叉、背离检测）
+3. 策略优化（多因子加权、动态仓位）
+4. K线图生成（带均线、MACD、RSI、KDJ副图）
+5. 资金流向趋势图（主力/散户/大单分布）
+6. 技术指标背离检测（顶背离/底背离）
+7. 多因子选股模型
+8. 预测准确率验证
 """
 
 import os
@@ -29,7 +32,7 @@ except ImportError:
 
 
 class TrendPredictor:
-    """趋势预测器"""
+    """趋势预测器 - 增强版"""
     
     @staticmethod
     def predict_trend(df: pd.DataFrame, days: int = 5) -> Dict:
@@ -108,8 +111,54 @@ class TrendPredictor:
         return predictions
     
     @staticmethod
+    def backtest_prediction_accuracy(df: pd.DataFrame, test_days: int = 30) -> Dict:
+        """回测预测准确率 - 验证历史预测与实际走势"""
+        if len(df) < test_days + 20:
+            return {"error": "数据不足，无法回测"}
+        
+        correct_predictions = {"day_1": 0, "day_3": 0, "day_5": 0}
+        total_predictions = {"day_1": 0, "day_3": 0, "day_5": 0}
+        
+        # 滑动窗口回测
+        for i in range(len(df) - test_days - 5, len(df) - 5):
+            # 使用过去数据预测
+            historical = df.iloc[:i]
+            if len(historical) < 20:
+                continue
+            
+            # 线性回归预测
+            x = np.arange(len(historical))
+            y = historical['close'].values.astype(float)
+            coeffs = np.polyfit(x[-20:].astype(float), y[-20:], 1)
+            
+            # 预测未来1/3/5天
+            for day in [1, 3, 5]:
+                pred_price = coeffs[0] * (len(historical) + day) + coeffs[1]
+                actual_price = df.iloc[i + day]['close']
+                actual_return = (actual_price - historical.iloc[-1]['close']) / historical.iloc[-1]['close']
+                pred_return = (pred_price - historical.iloc[-1]['close']) / historical.iloc[-1]['close']
+                
+                # 判断方向是否正确
+                if (pred_return > 0 and actual_return > 0) or (pred_return < 0 and actual_return < 0):
+                    correct_predictions[f"day_{day}"] += 1
+                total_predictions[f"day_{day}"] += 1
+        
+        # 计算准确率
+        accuracy = {}
+        for day in [1, 3, 5]:
+            key = f"day_{day}"
+            if total_predictions[key] > 0:
+                accuracy[key] = {
+                    "correct": correct_predictions[key],
+                    "total": total_predictions[key],
+                    "accuracy": round(correct_predictions[key] / total_predictions[key] * 100, 2)
+                }
+        
+        return accuracy
+    
+    @staticmethod
     def optimize_strategy(df: pd.DataFrame, predictions: Dict, current_signals: Dict) -> Dict:
-        """根据预测优化策略"""
+        """根据预测优化策略 - 增强版"""
         latest = df.iloc[-1]
         
         # 计算各指标权重
@@ -205,8 +254,99 @@ class TrendPredictor:
         }
 
 
+class DivergenceDetector:
+    """技术指标背离检测器"""
+    
+    @staticmethod
+    def detect_macd_divergence(df: pd.DataFrame) -> Dict:
+        """检测MACD背离"""
+        # 找局部高点和低点
+        highs = []
+        lows = []
+        
+        for i in range(2, len(df) - 2):
+            # 局部高点
+            if df['high'].iloc[i] > df['high'].iloc[i-1] and df['high'].iloc[i] > df['high'].iloc[i+1]:
+                highs.append((i, df['high'].iloc[i], df['macd'].iloc[i]))
+            # 局部低点
+            if df['low'].iloc[i] < df['low'].iloc[i-1] and df['low'].iloc[i] < df['low'].iloc[i+1]:
+                lows.append((i, df['low'].iloc[i], df['macd'].iloc[i]))
+        
+        # 检测顶背离（价格新高，MACD未新高）
+        top_divergence = []
+        for i in range(len(highs) - 1):
+            if highs[i+1][1] > highs[i][1] and highs[i+1][2] < highs[i][2]:
+                top_divergence.append({
+                    "type": "顶背离",
+                    "price_peak": round(highs[i+1][1], 2),
+                    "macd_peak": round(highs[i+1][2], 4),
+                    "previous_price_peak": round(highs[i][1], 2),
+                    "previous_macd_peak": round(highs[i][2], 4),
+                    "date": str(df.iloc[highs[i+1][0]]['date']) if 'date' in df.columns else f"index_{highs[i+1][0]}"
+                })
+        
+        # 检测底背离（价格新低，MACD未新低）
+        bottom_divergence = []
+        for i in range(len(lows) - 1):
+            if lows[i+1][1] < lows[i][1] and lows[i+1][2] > lows[i][2]:
+                bottom_divergence.append({
+                    "type": "底背离",
+                    "price_trough": round(lows[i+1][1], 2),
+                    "macd_trough": round(lows[i+1][2], 4),
+                    "previous_price_trough": round(lows[i][1], 2),
+                    "previous_macd_trough": round(lows[i][2], 4),
+                    "date": str(df.iloc[lows[i+1][0]]['date']) if 'date' in df.columns else f"index_{lows[i+1][0]}"
+                })
+        
+        return {
+            "top_divergence": top_divergence,
+            "bottom_divergence": bottom_divergence,
+            "has_top_divergence": len(top_divergence) > 0,
+            "has_bottom_divergence": len(bottom_divergence) > 0
+        }
+    
+    @staticmethod
+    def detect_rsi_divergence(df: pd.DataFrame) -> Dict:
+        """检测RSI背离"""
+        highs = []
+        lows = []
+        
+        for i in range(2, len(df) - 2):
+            if df['high'].iloc[i] > df['high'].iloc[i-1] and df['high'].iloc[i] > df['high'].iloc[i+1]:
+                highs.append((i, df['high'].iloc[i], df['rsi14'].iloc[i]))
+            if df['low'].iloc[i] < df['low'].iloc[i-1] and df['low'].iloc[i] < df['low'].iloc[i+1]:
+                lows.append((i, df['low'].iloc[i], df['rsi14'].iloc[i]))
+        
+        top_divergence = []
+        for i in range(len(highs) - 1):
+            if highs[i+1][1] > highs[i][1] and highs[i+1][2] < highs[i][2]:
+                top_divergence.append({
+                    "type": "RSI顶背离",
+                    "price_peak": round(highs[i+1][1], 2),
+                    "rsi_peak": round(highs[i+1][2], 2),
+                    "date": str(df.iloc[highs[i+1][0]]['date']) if 'date' in df.columns else f"index_{highs[i+1][0]}"
+                })
+        
+        bottom_divergence = []
+        for i in range(len(lows) - 1):
+            if lows[i+1][1] < lows[i][1] and lows[i+1][2] > lows[i][2]:
+                bottom_divergence.append({
+                    "type": "RSI底背离",
+                    "price_trough": round(lows[i+1][1], 2),
+                    "rsi_trough": round(lows[i+1][2], 2),
+                    "date": str(df.iloc[lows[i+1][0]]['date']) if 'date' in df.columns else f"index_{lows[i+1][0]}"
+                })
+        
+        return {
+            "top_divergence": top_divergence,
+            "bottom_divergence": bottom_divergence,
+            "has_top_divergence": len(top_divergence) > 0,
+            "has_bottom_divergence": len(bottom_divergence) > 0
+        }
+
+
 class AlertSystem:
-    """预警系统"""
+    """预警系统 - 增强版"""
     
     @staticmethod
     def check_alerts(stock_data: Dict) -> List[Dict]:
@@ -272,7 +412,230 @@ class AlertSystem:
                     "message": f"{stock_data.get('name', '')} 主力净流出 {abs(main_inflow):.0f}万元"
                 })
         
+        # 5. 均线跌破预警
+        latest_price = stock_data.get('latest_price', 0)
+        ma5 = stock_data.get('ma5', 0)
+        ma10 = stock_data.get('ma10', 0)
+        ma20 = stock_data.get('ma20', 0)
+        
+        if latest_price > 0 and ma5 > 0 and latest_price < ma5:
+            alerts.append({
+                "level": "warning",
+                "type": "跌破MA5",
+                "message": f"{stock_data.get('name', '')} 价格 {latest_price} 跌破MA5 {ma5:.2f}"
+            })
+        
+        if latest_price > 0 and ma10 > 0 and latest_price < ma10:
+            alerts.append({
+                "level": "warning",
+                "type": "跌破MA10",
+                "message": f"{stock_data.get('name', '')} 价格 {latest_price} 跌破MA10 {ma10:.2f}"
+            })
+        
+        # 6. MACD死叉预警
+        macd = stock_data.get('macd', 0)
+        macd_signal = stock_data.get('macd_signal', 0)
+        if macd < macd_signal and macd > 0:
+            alerts.append({
+                "level": "warning",
+                "type": "MACD死叉",
+                "message": f"{stock_data.get('name', '')} MACD死叉，动能减弱"
+            })
+        elif macd > macd_signal and macd < 0:
+            alerts.append({
+                "level": "info",
+                "type": "MACD金叉",
+                "message": f"{stock_data.get('name', '')} MACD金叉，动能增强"
+            })
+        
+        # 7. 布林带突破预警
+        bb_position = stock_data.get('bb_position', 0.5)
+        if bb_position > 0.95:
+            alerts.append({
+                "level": "warning",
+                "type": "布林带上轨突破",
+                "message": f"{stock_data.get('name', '')} 价格接近布林带上轨，注意回调"
+            })
+        elif bb_position < 0.05:
+            alerts.append({
+                "level": "info",
+                "type": "布林带下轨突破",
+                "message": f"{stock_data.get('name', '')} 价格接近布林带下轨，潜在反弹"
+            })
+        
         return alerts
+
+
+class MultiFactorStockSelector:
+    """多因子选股模型"""
+    
+    @staticmethod
+    def calculate_score(stock_data: Dict) -> Dict:
+        """计算多因子综合评分"""
+        score = 0
+        max_score = 0
+        factors = {}
+        
+        # 1. 动量因子 (30天涨幅) - 权重20%
+        total_return = stock_data.get('total_return', 0)
+        if total_return > 30:
+            momentum_score = 1.0
+        elif total_return > 10:
+            momentum_score = 0.5
+        elif total_return > -10:
+            momentum_score = 0.0
+        else:
+            momentum_score = -0.5
+        score += momentum_score * 0.2
+        max_score += 0.2
+        factors['momentum'] = momentum_score
+        
+        # 2. 技术因子 (RSI) - 权重20%
+        rsi = stock_data.get('rsi', 50)
+        if 40 < rsi < 60:
+            rsi_score = 0.8
+        elif 30 < rsi < 70:
+            rsi_score = 0.5
+        else:
+            rsi_score = 0.0
+        score += rsi_score * 0.2
+        max_score += 0.2
+        factors['rsi'] = rsi_score
+        
+        # 3. 资金因子 - 权重20%
+        fund_flow = stock_data.get('fund_flow', {})
+        if isinstance(fund_flow, dict):
+            main_inflow = fund_flow.get('main_inflow', 0)
+            if main_inflow > 1000:
+                fund_score = 1.0
+            elif main_inflow > 0:
+                fund_score = 0.5
+            elif main_inflow > -1000:
+                fund_score = 0.0
+            else:
+                fund_score = -0.5
+        else:
+            fund_score = 0.0
+        score += fund_score * 0.2
+        max_score += 0.2
+        factors['fund_flow'] = fund_score
+        
+        # 4. 趋势因子 (均线排列) - 权重20%
+        latest_price = stock_data.get('latest_price', 0)
+        ma5 = stock_data.get('ma5', 0)
+        ma10 = stock_data.get('ma10', 0)
+        ma20 = stock_data.get('ma20', 0)
+        
+        if latest_price > ma5 > ma10 > ma20:
+            trend_score = 1.0
+        elif latest_price > ma5 > ma10:
+            trend_score = 0.5
+        elif latest_price < ma5 < ma10 < ma20:
+            trend_score = -1.0
+        else:
+            trend_score = 0.0
+        score += trend_score * 0.2
+        max_score += 0.2
+        factors['trend'] = trend_score
+        
+        # 5. 波动因子 (ATR) - 权重20%
+        atr = stock_data.get('atr', 0)
+        price = stock_data.get('latest_price', 1)
+        atr_ratio = atr / price if price > 0 else 0
+        if 0.02 < atr_ratio < 0.05:
+            vol_score = 0.8
+        elif atr_ratio < 0.08:
+            vol_score = 0.5
+        else:
+            vol_score = 0.0
+        score += vol_score * 0.2
+        max_score += 0.2
+        factors['volatility'] = vol_score
+        
+        return {
+            "total_score": round(score, 3),
+            "max_score": round(max_score, 3),
+            "score_pct": round(score / max_score * 100, 1) if max_score > 0 else 0,
+            "factors": factors,
+            "rating": "强烈推荐" if score > 0.6 else "推荐" if score > 0.3 else "中性" if score > -0.3 else "回避"
+        }
+    
+    @staticmethod
+    def rank_stocks(stock_list: List[Dict]) -> List[Dict]:
+        """对股票列表进行多因子排序"""
+        scored_stocks = []
+        for stock in stock_list:
+            if 'error' not in stock:
+                score_result = MultiFactorStockSelector.calculate_score(stock)
+                stock['multi_factor_score'] = score_result
+                scored_stocks.append(stock)
+        
+        # 按综合评分排序
+        scored_stocks.sort(key=lambda x: x['multi_factor_score']['total_score'], reverse=True)
+        return scored_stocks
+
+
+class DynamicPositionManager:
+    """动态仓位管理器"""
+    
+    @staticmethod
+    def calculate_position(df: pd.DataFrame, signals: Dict, predictions: Dict) -> Dict:
+        """根据市场状态动态调整仓位"""
+        latest = df.iloc[-1]
+        
+        # 基础仓位
+        base_position = 0.5
+        
+        # 1. 波动率调整
+        daily_returns = df['close'].pct_change().dropna()
+        volatility = daily_returns.std() * np.sqrt(252)
+        
+        # 高波动降低仓位
+        vol_adjustment = 0
+        if volatility > 0.4:
+            vol_adjustment = -0.2
+        elif volatility > 0.3:
+            vol_adjustment = -0.1
+        elif volatility < 0.15:
+            vol_adjustment = 0.1
+        
+        # 2. 趋势调整
+        trend_adjustment = 0
+        if latest['close'] > latest['ma5'] > latest['ma10'] > latest['ma20']:
+            trend_adjustment = 0.15
+        elif latest['close'] < latest['ma5'] < latest['ma10'] < latest['ma20']:
+            trend_adjustment = -0.15
+        
+        # 3. 预测调整
+        pred_adjustment = 0
+        if 'day_1' in predictions:
+            pred = predictions['day_1']
+            if pred['trend'] == '强烈看涨':
+                pred_adjustment = 0.15
+            elif pred['trend'] == '看涨':
+                pred_adjustment = 0.1
+            elif pred['trend'] == '看跌':
+                pred_adjustment = -0.1
+            elif pred['trend'] == '强烈看跌':
+                pred_adjustment = -0.15
+        
+        # 4. 信号评分调整
+        signal_adjustment = signals.get('score', 0) / 100 * 0.2
+        
+        # 综合计算
+        final_position = base_position + vol_adjustment + trend_adjustment + pred_adjustment + signal_adjustment
+        final_position = max(0, min(1, final_position))  # 限制在0-1之间
+        
+        return {
+            "base_position": f"{base_position*100:.0f}%",
+            "volatility_adjustment": f"{vol_adjustment*100:+.0f}%",
+            "trend_adjustment": f"{trend_adjustment*100:+.0f}%",
+            "prediction_adjustment": f"{pred_adjustment*100:+.0f}%",
+            "signal_adjustment": f"{signal_adjustment*100:+.0f}%",
+            "final_position": f"{final_position*100:.0f}%",
+            "volatility": round(volatility * 100, 2),
+            "risk_level": "高" if volatility > 0.35 else "中" if volatility > 0.25 else "低"
+        }
 
 
 class AdvancedVisualizer:
@@ -280,7 +643,7 @@ class AdvancedVisualizer:
     
     @staticmethod
     def generate_kline_chart(stock_code: str, stock_name: str, df: pd.DataFrame, output_path: str):
-        """生成K线图（带均线、MACD、RSI）"""
+        """生成K线图（带均线、MACD、RSI、KDJ）"""
         try:
             import matplotlib
             matplotlib.use('Agg')
@@ -288,7 +651,7 @@ class AdvancedVisualizer:
             import matplotlib.dates as mdates
             from matplotlib.patches import Rectangle
             
-            fig, axes = plt.subplots(4, 1, figsize=(16, 14), gridspec_kw={'height_ratios': [3, 1, 1, 1]})
+            fig, axes = plt.subplots(5, 1, figsize=(16, 16), gridspec_kw={'height_ratios': [3, 1, 1, 1, 1]})
             
             # 1. K线图 + 均线
             ax1 = axes[0]
@@ -351,6 +714,17 @@ class AdvancedVisualizer:
             ax4.legend(loc='upper left')
             ax4.grid(True, alpha=0.3)
             
+            # 5. KDJ
+            ax5 = axes[4]
+            ax5.plot(df.index, df['k'], label='K', color='blue', linewidth=1)
+            ax5.plot(df.index, df['d'], label='D', color='orange', linewidth=1)
+            ax5.plot(df.index, df['j'], label='J', color='purple', linewidth=1)
+            ax5.axhline(y=80, color='red', linestyle='--', alpha=0.5, label='超买线(80)')
+            ax5.axhline(y=20, color='green', linestyle='--', alpha=0.5, label='超卖线(20)')
+            ax5.set_ylabel('KDJ')
+            ax5.legend(loc='upper left')
+            ax5.grid(True, alpha=0.3)
+            
             plt.tight_layout()
             plt.savefig(output_path, dpi=150, bbox_inches='tight')
             plt.close()
@@ -372,7 +746,7 @@ class AdvancedVisualizer:
             import akshare as ak
             
             # 获取近10日资金流向
-            df = ak.stock_individual_fund_flow(symbol=stock_code, 
+            df = ak.stock_individual_fund_flow(stock=stock_code, 
                                                market="sh" if stock_code.startswith('6') else "sz")
             
             if len(df) == 0:
@@ -437,6 +811,57 @@ class AdvancedVisualizer:
         except Exception as e:
             print(f"  ⚠️ 资金流向图生成失败: {e}")
             return False
+    
+    @staticmethod
+    def generate_divergence_chart(df: pd.DataFrame, divergence_data: Dict, output_path: str):
+        """生成背离检测图表"""
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+            
+            # 价格图
+            ax1 = axes[0]
+            ax1.plot(df.index, df['close'], label='收盘价', color='blue', linewidth=1.5)
+            ax1.set_title('价格走势与背离检测', fontsize=14, fontweight='bold')
+            ax1.set_ylabel('价格')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # 标注顶背离
+            for div in divergence_data.get('top_divergence', []):
+                ax1.annotate('顶背离', xy=(div['date'], div['price_peak']), 
+                           xytext=(10, 10), textcoords='offset points',
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='red', alpha=0.7),
+                           arrowprops=dict(arrowstyle='->', color='red'))
+            
+            # 标注底背离
+            for div in divergence_data.get('bottom_divergence', []):
+                ax1.annotate('底背离', xy=(div['date'], div['price_trough']),
+                           xytext=(10, -10), textcoords='offset points',
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='green', alpha=0.7),
+                           arrowprops=dict(arrowstyle='->', color='green'))
+            
+            # MACD图
+            ax2 = axes[1]
+            ax2.plot(df.index, df['macd'], label='MACD', color='blue', linewidth=1)
+            ax2.plot(df.index, df['macd_signal'], label='Signal', color='orange', linewidth=1)
+            ax2.set_title('MACD', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('MACD')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            print(f"  ✅ 背离检测图已保存: {output_path}")
+            return True
+        except Exception as e:
+            print(f"  ⚠️ 背离检测图生成失败: {e}")
+            return False
 
 
 if __name__ == "__main__":
@@ -451,6 +876,16 @@ if __name__ == "__main__":
     predictions = predictor.predict_trend(df, days=5)
     print("预测结果:")
     print(json.dumps(predictions, ensure_ascii=False, indent=2))
+    
+    # 测试准确率回测
+    accuracy = predictor.backtest_prediction_accuracy(df, test_days=30)
+    print("\n预测准确率回测:")
+    print(json.dumps(accuracy, ensure_ascii=False, indent=2))
+    
+    # 测试背离检测
+    divergence = DivergenceDetector.detect_macd_divergence(df)
+    print("\nMACD背离检测:")
+    print(json.dumps(divergence, ensure_ascii=False, indent=2))
     
     strategy = predictor.optimize_strategy(df, predictions, {})
     print("\n策略优化:")
