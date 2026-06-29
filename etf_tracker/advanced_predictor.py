@@ -862,6 +862,295 @@ class AdvancedVisualizer:
         except Exception as e:
             print(f"  ⚠️ 背离检测图生成失败: {e}")
             return False
+    
+    @staticmethod
+    def generate_prediction_chart(df: pd.DataFrame, predictions: Dict, stock_code: str, stock_name: str, output_path: str):
+        """生成预测趋势图（含历史价格+预测价格+置信区间）"""
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            fig, axes = plt.subplots(2, 1, figsize=(16, 12))
+            
+            # 1. 价格预测图
+            ax1 = axes[0]
+            
+            # 历史价格
+            hist_dates = range(len(df))
+            ax1.plot(hist_dates, df['close'], label='历史价格', color='blue', linewidth=1.5)
+            
+            # 预测价格
+            last_idx = len(df) - 1
+            pred_points = []
+            pred_prices = []
+            pred_colors = []
+            
+            for day_key in ['day_1', 'day_3', 'day_5']:
+                if day_key in predictions:
+                    pred = predictions[day_key]
+                    day_num = int(day_key.replace('day_', ''))
+                    pred_idx = last_idx + day_num
+                    pred_points.append(pred_idx)
+                    pred_prices.append(pred['predicted_price'])
+                    
+                    # 根据置信度设置颜色
+                    conf = pred['confidence']
+                    if conf >= 0.7:
+                        pred_colors.append('green')
+                    elif conf >= 0.5:
+                        pred_colors.append('orange')
+                    else:
+                        pred_colors.append('red')
+            
+            # 绘制预测点
+            for i, (idx, price, color) in enumerate(zip(pred_points, pred_prices, pred_colors)):
+                ax1.scatter([idx], [price], color=color, s=100, zorder=5)
+                ax1.annotate(f'{price:.2f}', (idx, price), 
+                           textcoords="offset points", xytext=(0,10), ha='center')
+            
+            # 连接预测线
+            if len(pred_points) > 0:
+                all_points = [last_idx] + pred_points
+                all_prices = [df['close'].iloc[-1]] + pred_prices
+                ax1.plot(all_points, all_prices, '--', color='gray', alpha=0.5, label='预测趋势')
+            
+            # 置信区间（简单估计）
+            if len(pred_points) > 0:
+                for i, (idx, price, conf) in enumerate(zip(pred_points, pred_prices, 
+                                                          [predictions[k]['confidence'] for k in ['day_1', 'day_3', 'day_5'] if k in predictions])):
+                    # 根据置信度计算误差范围
+                    error_range = price * (1 - conf) * 0.5
+                    ax1.fill_between([idx-0.5, idx+0.5], 
+                                   [price - error_range, price - error_range],
+                                   [price + error_range, price + error_range],
+                                   alpha=0.2, color=pred_colors[i])
+            
+            ax1.set_title(f'{stock_name} ({stock_code}) 价格预测', fontsize=14, fontweight='bold')
+            ax1.set_ylabel('价格')
+            ax1.legend(loc='upper left')
+            ax1.grid(True, alpha=0.3)
+            
+            # 2. 预测信号评分雷达图（简化为柱状图）
+            ax2 = axes[1]
+            
+            if 'day_1' in predictions:
+                signals = predictions['day_1']['signals']
+                signal_items = [
+                    ('RSI趋势', 1 if signals['rsi_trend'] == 'up' else -1),
+                    ('MACD趋势', 1 if signals['macd_trend'] == 'up' else -1),
+                    ('均线排列', signals.get('ma_score', 0)),
+                    ('成交量', 1 if signals.get('vol_trend', '') == '放量' else -0.5 if signals.get('vol_trend', '') == '缩量' else 0),
+                    ('布林带位置', 1 - signals.get('bb_position', 0.5) * 2)  # 越低越好
+                ]
+                
+                names = [item[0] for item in signal_items]
+                values = [item[1] for item in signal_items]
+                colors = ['green' if v > 0 else 'red' if v < 0 else 'gray' for v in values]
+                
+                bars = ax2.barh(names, values, color=colors, alpha=0.7)
+                ax2.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+                ax2.set_xlim(-1.5, 1.5)
+                ax2.set_title('预测信号评分', fontsize=14, fontweight='bold')
+                ax2.set_xlabel('信号强度')
+                ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            print(f"  ✅ 预测趋势图已保存: {output_path}")
+            return True
+        except Exception as e:
+            print(f"  ⚠️ 预测趋势图生成失败: {e}")
+            return False
+    
+    @staticmethod
+    def generate_multi_stock_dashboard(stock_data_list: List[Dict], output_path: str):
+        """生成多股票监控仪表盘"""
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            n_stocks = len(stock_data_list)
+            if n_stocks == 0:
+                return False
+            
+            # 计算需要的行数
+            n_cols = 3
+            n_rows = (n_stocks + n_cols - 1) // n_cols
+            
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(18, 4 * n_rows))
+            if n_rows == 1:
+                axes = axes.reshape(1, -1)
+            
+            for idx, stock in enumerate(stock_data_list):
+                row = idx // n_cols
+                col = idx % n_cols
+                ax = axes[row, col]
+                
+                if 'error' in stock:
+                    ax.text(0.5, 0.5, f"{stock.get('name', 'Unknown')}\n数据错误", 
+                           ha='center', va='center', transform=ax.transAxes)
+                    ax.set_axis_off()
+                    continue
+                
+                # 绘制迷你K线图（简化版）
+                name = stock.get('name', '')
+                code = stock.get('code', '')
+                price = stock.get('latest_price', 0)
+                ret = stock.get('total_return', 0)
+                rsi = stock.get('rsi', 0)
+                score = stock.get('score', 0)
+                max_score = stock.get('max_score', 5)
+                score_pct = score / max_score * 100 if max_score > 0 else 0
+                
+                # 背景色根据收益
+                if ret > 20:
+                    bg_color = '#ffcccc'
+                elif ret > 0:
+                    bg_color = '#ccffcc'
+                elif ret > -10:
+                    bg_color = '#ffffcc'
+                else:
+                    bg_color = '#ffcccc'
+                
+                ax.set_facecolor(bg_color)
+                
+                # 显示信息
+                info_text = f"{name}\n{code}\n价格: {price}\n30天: {ret:+.1f}%\nRSI: {rsi:.1f}\n评分: {score_pct:.0f}"
+                ax.text(0.5, 0.5, info_text, ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=10, fontweight='bold')
+                
+                # 添加颜色标记
+                if score_pct >= 80:
+                    ax.add_patch(plt.Rectangle((0.85, 0.85), 0.15, 0.15, 
+                                              facecolor='red', alpha=0.7, transform=ax.transAxes))
+                elif rsi > 70:
+                    ax.add_patch(plt.Rectangle((0.85, 0.85), 0.15, 0.15, 
+                                              facecolor='orange', alpha=0.7, transform=ax.transAxes))
+                
+                ax.set_xlim(0, 1)
+                ax.set_ylim(0, 1)
+                ax.set_axis_off()
+            
+            # 隐藏多余的子图
+            for idx in range(n_stocks, n_rows * n_cols):
+                row = idx // n_cols
+                col = idx % n_cols
+                axes[row, col].set_axis_off()
+            
+            plt.suptitle('个股监控仪表盘', fontsize=16, fontweight='bold', y=0.995)
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            print(f"  ✅ 多股票仪表盘已保存: {output_path}")
+            return True
+        except Exception as e:
+            print(f"  ⚠️ 多股票仪表盘生成失败: {e}")
+            return False
+    
+    @staticmethod
+    def generate_backtest_accuracy_chart(accuracy_data: Dict, output_path: str):
+        """生成预测准确率回测图表"""
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            periods = []
+            accuracies = []
+            totals = []
+            
+            for day in [1, 3, 5]:
+                key = f"day_{day}"
+                if key in accuracy_data and 'accuracy' in accuracy_data[key]:
+                    periods.append(f"{day}日预测")
+                    accuracies.append(accuracy_data[key]['accuracy'])
+                    totals.append(accuracy_data[key]['total'])
+            
+            if len(periods) == 0:
+                ax.text(0.5, 0.5, "暂无回测数据", ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=14)
+            else:
+                colors = ['green' if a >= 60 else 'orange' if a >= 45 else 'red' for a in accuracies]
+                bars = ax.bar(periods, accuracies, color=colors, alpha=0.7)
+                
+                # 添加数值标签
+                for bar, acc, total in zip(bars, accuracies, totals):
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2., height,
+                           f'{acc:.1f}%\n({total}次)',
+                           ha='center', va='bottom', fontsize=10)
+                
+                ax.axhline(y=50, color='red', linestyle='--', alpha=0.5, label='随机基准(50%)')
+                ax.axhline(y=60, color='green', linestyle='--', alpha=0.5, label='良好基准(60%)')
+                ax.set_ylabel('准确率 (%)')
+                ax.set_title('预测准确率回测', fontsize=14, fontweight='bold')
+                ax.set_ylim(0, 100)
+                ax.legend()
+                ax.grid(True, alpha=0.3, axis='y')
+            
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            print(f"  ✅ 准确率回测图已保存: {output_path}")
+            return True
+        except Exception as e:
+            print(f"  ⚠️ 准确率回测图生成失败: {e}")
+            return False
+    
+    @staticmethod
+    def generate_sector_fund_flow_chart(sector_data: Dict, output_path: str):
+        """生成板块资金流向图"""
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+            
+            # 1. 板块资金净流入
+            ax1 = axes[0]
+            
+            sectors = list(sector_data.keys())
+            inflows = [sector_data[s].get('main_inflow', 0) / 10000 for s in sectors]  # 万元
+            
+            colors = ['red' if v > 0 else 'green' for v in inflows]
+            bars = ax1.barh(sectors, inflows, color=colors, alpha=0.7)
+            
+            ax1.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+            ax1.set_xlabel('主力净流入 (万元)')
+            ax1.set_title('板块资金流向', fontsize=14, fontweight='bold')
+            ax1.grid(True, alpha=0.3, axis='x')
+            
+            # 2. 板块情绪得分
+            ax2 = axes[1]
+            
+            sentiments = [sector_data[s].get('sentiment_score', 0) for s in sectors]
+            colors2 = ['red' if v > 0.2 else 'green' if v < -0.2 else 'gray' for v in sentiments]
+            
+            bars2 = ax2.barh(sectors, sentiments, color=colors2, alpha=0.7)
+            ax2.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+            ax2.set_xlabel('情感得分')
+            ax2.set_title('板块情感分析', fontsize=14, fontweight='bold')
+            ax2.set_xlim(-1, 1)
+            ax2.grid(True, alpha=0.3, axis='x')
+            
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            print(f"  ✅ 板块资金流向图已保存: {output_path}")
+            return True
+        except Exception as e:
+            print(f"  ⚠️ 板块资金流向图生成失败: {e}")
+            return False
 
 
 if __name__ == "__main__":
