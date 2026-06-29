@@ -12,7 +12,31 @@
     "minute_data": true,
     "fund_flow": true,
     "sector_comparison": true,
-    "margin_trading": true
+    "margin_trading": true,
+    "individual_stocks": true
+  },
+  "individual_stocks": {
+    "enabled": true,
+    "stocks": [
+      {
+        "code": "300054",
+        "name": "鼎龙股份",
+        "sector": "半导体材料",
+        "reason": "CMP抛光垫龙头，国产替代核心标的"
+      },
+      {
+        "code": "688019",
+        "name": "安集科技",
+        "sector": "半导体材料",
+        "reason": "CMP抛光液龙头，中芯国际核心供应商"
+      },
+      {
+        "code": "600206",
+        "name": "有研新材",
+        "sector": "稀土/半导体材料",
+        "reason": "稀土磁材+靶材双轮驱动"
+      }
+    ]
   },
   "sector_comparison": {
     "enabled": true,

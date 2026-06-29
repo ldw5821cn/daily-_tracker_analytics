@@ -1037,7 +1037,51 @@ class ReportGenerator:
         report += f"""
 ---
 
-## 六、仓位管理建议
+## 六、个股跟踪（AkShare）
+
+"""
+        
+        # 添加个股跟踪数据
+        individual_stocks = self.config.config.get("individual_stocks", {})
+        if individual_stocks.get("enabled", False):
+            stocks = individual_stocks.get("stocks", [])
+            if stocks:
+                report += "### 重点跟踪个股\n\n"
+                report += "| 股票 | 代码 | 行业 | 跟踪理由 | 最新价 | 30天收益 | 趋势 |\n"
+                report += "|------|------|------|----------|--------|----------|------|\n"
+                
+                # 获取个股数据
+                for stock in stocks:
+                    try:
+                        import akshare as ak
+                        stock_code = stock['code']
+                        stock_name = stock['name']
+                        sector = stock.get('sector', '-')
+                        reason = stock.get('reason', '-')
+                        
+                        # 获取个股30天数据
+                        start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
+                        df_stock = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
+                                                       start_date=start_date, adjust="qfq")
+                        
+                        if len(df_stock) > 0:
+                            latest_price = float(df_stock.iloc[-1]['收盘'])
+                            first_price = float(df_stock.iloc[0]['收盘'])
+                            return_30d = (latest_price - first_price) / first_price * 100
+                            trend = "上涨" if return_30d > 0 else "下跌"
+                            
+                            report += f"| {stock_name} | {stock_code} | {sector} | {reason} | {latest_price:.2f} | {return_30d:+.2f}% | {trend} |\n"
+                        else:
+                            report += f"| {stock_name} | {stock_code} | {sector} | {reason} | - | - | 数据不足 |\n"
+                    except Exception as e:
+                        report += f"| {stock.get('name', '-')} | {stock.get('code', '-')} | {stock.get('sector', '-')} | {stock.get('reason', '-')} | - | - | 获取失败 |\n"
+                
+                report += "\n"
+        
+        report += f"""
+---
+
+## 七、仓位管理建议
 
 | 项目 | 建议值 |
 |------|--------|
@@ -1049,13 +1093,13 @@ class ReportGenerator:
 
 ---
 
-## 七、国际稀土市场动态
+## 八、国际稀土市场动态
 
 {industry_news if industry_news else "_待补充最新国际稀土市场动态、政策变化、供需数据等_"}
 
 ---
 
-## 八、热点行业跟踪
+## 九、热点行业跟踪
 
 ### 🤖 机器人行业
 - 关注人形机器人产业化进展
@@ -1079,7 +1123,7 @@ class ReportGenerator:
 
 ---
 
-## 九、风险提示
+## 十、风险提示
 
 1. ⚠️ 稀土价格受国际地缘政治影响较大
 2. ⚠️ 新能源政策变化可能影响稀土需求预期
