@@ -35,6 +35,13 @@ try:
 except ImportError:
     AKSHARE_AVAILABLE = False
 
+# 导入个股分析模块
+try:
+    from stock_analyzer import StockAnalyzer, StockVisualizer
+    STOCK_ANALYZER_AVAILABLE = True
+except ImportError:
+    STOCK_ANALYZER_AVAILABLE = False
+
 
 # ============ 配置加载 ============
 
@@ -900,6 +907,7 @@ class ReportGenerator:
                        position: Dict, df: pd.DataFrame, 
                        fund_flow: Dict = None, margin_data: Dict = None,
                        sector_comparison: Dict = None,
+                       stock_analysis: List[Dict] = None,
                        industry_news: str = "") -> str:
         """生成完整的投资规划报告"""
         
@@ -1032,51 +1040,65 @@ class ReportGenerator:
                 report += f"- 相对表现: {comp.get('outperform', 0):+.2f}%\n"
                 report += f"- 结论: {comp.get('conclusion', '数据不足')}\n"
         else:
-            report += "\n> ⚠️ 板块对比数据暂不可用\n"
-        
-        report += f"""
----
+            report += f"""
+            ---
 
-## 六、个股跟踪（AkShare）
+            ## 六、个股深度分析（AkShare）
 
-"""
+            ### 重点跟踪个股
+
+            """
         
-        # 添加个股跟踪数据
-        individual_stocks = self.config.config.get("individual_stocks", {})
-        if individual_stocks.get("enabled", False):
-            stocks = individual_stocks.get("stocks", [])
-            if stocks:
-                report += "### 重点跟踪个股\n\n"
-                report += "| 股票 | 代码 | 行业 | 跟踪理由 | 最新价 | 30天收益 | 趋势 |\n"
-                report += "|------|------|------|----------|--------|----------|------|\n"
-                
-                # 获取个股数据
-                for stock in stocks:
-                    try:
-                        import akshare as ak
-                        stock_code = stock['code']
-                        stock_name = stock['name']
-                        sector = stock.get('sector', '-')
-                        reason = stock.get('reason', '-')
-                        
-                        # 获取个股30天数据
-                        start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
-                        df_stock = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
-                                                       start_date=start_date, adjust="qfq")
-                        
-                        if len(df_stock) > 0:
-                            latest_price = float(df_stock.iloc[-1]['收盘'])
-                            first_price = float(df_stock.iloc[0]['收盘'])
-                            return_30d = (latest_price - first_price) / first_price * 100
-                            trend = "上涨" if return_30d > 0 else "下跌"
+            # 添加个股跟踪数据
+            individual_stocks = self.config.config.get("individual_stocks", {})
+            if individual_stocks.get("enabled", False):
+                stocks = individual_stocks.get("stocks", [])
+                if stocks:
+                    # 如果有深度分析数据，显示详细表格
+                    if stock_analysis and len(stock_analysis) > 0:
+                        report += "#### 个股技术指标与资金流向\n\n"
+                        report += "| 股票 | 代码 | 最新价 | 30天收益 | RSI | MACD | KDJ | 主力流向 | 评分 |\n"
+                        report += "|------|------|--------|----------|-----|------|-----|----------|------|\n"
+                    
+                        for analysis in stock_analysis:
+                            if 'error' not in analysis:
+                                name = analysis.get('name', '-')
+                                code = analysis.get('code', '-')
+                                price = analysis.get('latest_price', '-')
+                                ret = analysis.get('total_return', 0)
+                                rsi = analysis.get('rsi', '-')
+                                rsi_status = analysis.get('rsi_status', '')
+                                macd = analysis.get('macd_status', '-')
+                                kdj = analysis.get('kdj_status', '-')
+                                fund = analysis.get('fund_flow', {})
+                                fund_signal = fund.get('signal', '-') if isinstance(fund, dict) else '-'
+                                score = analysis.get('score', 0)
+                                max_score = analysis.get('max_score', 5)
+                                score_pct = score / max_score * 100 if max_score > 0 else 0
                             
-                            report += f"| {stock_name} | {stock_code} | {sector} | {reason} | {latest_price:.2f} | {return_30d:+.2f}% | {trend} |\n"
-                        else:
-                            report += f"| {stock_name} | {stock_code} | {sector} | {reason} | - | - | 数据不足 |\n"
-                    except Exception as e:
-                        report += f"| {stock.get('name', '-')} | {stock.get('code', '-')} | {stock.get('sector', '-')} | {stock.get('reason', '-')} | - | - | 获取失败 |\n"
+                                report += f"| {name} | {code} | {price} | {ret:+.2f}% | {rsi} ({rsi_status}) | {macd} | {kdj} | {fund_signal} | {score_pct:.0f}/100 |\n"
+                    
+                        report += "\n"
                 
-                report += "\n"
+                    # 基础信息表格
+                    report += "#### 个股基本信息\n\n"
+                    report += "| 股票 | 代码 | 行业 | 跟踪理由 | 最新价 | 30天收益 | 趋势 |\n"
+                    report += "|------|------|------|----------|--------|----------|------|\n"
+                
+                    for stock in stocks:
+                        # 查找对应的分析数据
+                        analysis = None
+                        for sa in (stock_analysis or []):
+                            if sa.get('code') == stock['code']:
+                                analysis = sa
+                                break
+                    
+                        if analysis and 'error' not in analysis:
+                            report += f"| {analysis.get('name', stock['name'])} | {stock['code']} | {stock.get('sector', '-')} | {stock.get('reason', '-')} | {analysis.get('latest_price', '-')} | {analysis.get('total_return', 0):+.2f}% | {analysis.get('trend', '-')} |\n"
+                        else:
+                            report += f"| {stock['name']} | {stock['code']} | {stock.get('sector', '-')} | {stock.get('reason', '-')} | - | - | 数据获取中 |\n"
+                
+                    report += "\n"
         
         report += f"""
 ---
@@ -1218,7 +1240,54 @@ def main():
         print(f"⚠️ 行业动态获取失败: {e}")
         industry_news = ""
     
-    # 6. 生成报告
+    # 6. 个股深度分析（如果启用）
+    stock_analysis_results = []
+    if config.features.get("individual_stocks", False):
+        print("\n📊 正在深度分析个股...")
+        individual_stocks_config = config.config.get("individual_stocks", {})
+        if individual_stocks_config.get("enabled", False):
+            stocks = individual_stocks_config.get("stocks", [])
+            for stock in stocks:
+                try:
+                    if STOCK_ANALYZER_AVAILABLE:
+                        analyzer = StockAnalyzer()
+                        result = analyzer.analyze_stock(stock['code'], stock['name'])
+                        stock_analysis_results.append(result)
+                        print(f"  ✅ {stock['name']} 分析完成: 收益 {result.get('total_return', 0):+.2f}%")
+                    else:
+                        # 简化版分析
+                        import akshare as ak
+                        start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
+                        df_stock = ak.stock_zh_a_hist(symbol=stock['code'], period="daily", 
+                                                       start_date=start_date, adjust="qfq")
+                        if len(df_stock) > 0:
+                            latest_price = float(df_stock.iloc[-1]['收盘'])
+                            first_price = float(df_stock.iloc[0]['收盘'])
+                            return_30d = (latest_price - first_price) / first_price * 100
+                            stock_analysis_results.append({
+                                "code": stock['code'],
+                                "name": stock['name'],
+                                "sector": stock.get('sector', '-'),
+                                "reason": stock.get('reason', '-'),
+                                "latest_price": round(latest_price, 2),
+                                "total_return": round(return_30d, 2),
+                                "trend": "上涨" if return_30d > 0 else "下跌"
+                            })
+                            print(f"  ✅ {stock['name']} 分析完成: 收益 {return_30d:+.2f}%")
+                except Exception as e:
+                    print(f"  ⚠️ {stock['name']} 分析失败: {e}")
+            
+            # 生成对比图表
+            if STOCK_ANALYZER_AVAILABLE and stock_analysis_results:
+                print("\n📈 正在生成个股对比图表...")
+                try:
+                    chart_path = f"/home/zhihu/etf_tracker/reports/stock_comparison_{datetime.now().strftime('%Y%m%d')}.png"
+                    visualizer = StockVisualizer()
+                    visualizer.generate_comparison_chart(stock_analysis_results, chart_path)
+                except Exception as e:
+                    print(f"  ⚠️ 图表生成失败: {e}")
+    
+    # 7. 生成报告
     print("\n📝 正在生成投资规划报告...")
     report_gen = ReportGenerator(config)
     report = report_gen.generate_report(
@@ -1226,6 +1295,7 @@ def main():
         fund_flow=fund_flow,
         margin_data=margin_data,
         sector_comparison=sector_comparison,
+        stock_analysis=stock_analysis_results,
         industry_news=industry_news
     )
     
