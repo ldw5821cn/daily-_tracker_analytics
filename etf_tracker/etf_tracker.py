@@ -23,6 +23,20 @@ except ImportError:
     IFIND_AVAILABLE = False
     print("⚠️ iFinD Python API 未安装，将使用备用数据源")
 
+# 尝试使用 yfinance 作为备用
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+
+# 尝试使用 akshare 作为备用
+try:
+    import akshare as ak
+    AKSHARE_AVAILABLE = True
+except ImportError:
+    AKSHARE_AVAILABLE = False
+
 # ============ 配置 ============
 ETF_CODE = "516150"
 ETF_NAME = "稀土ETF嘉实"
@@ -118,19 +132,68 @@ class ETFDataFetcher:
     
     @staticmethod
     def get_kline_data(etf_code: str, days: int = 120) -> pd.DataFrame:
-        """获取 ETF K线数据 - 优先 iFinD 内置数据库，备用东方财富"""
-        # 尝试使用模型内置 iFinD 数据库
+        """获取 ETF K线数据 - 多数据源优先级策略"""
+        
+        # 1. 优先使用东方财富 API（最稳定）
         try:
-            df = ETFDataFetcher.get_kline_data_from_ifind(etf_code, days)
-            print(f"  ✅ 同花顺 iFinD 数据获取成功: {len(df)} 条")
-            return df
-        except Exception as e:
-            print(f"  ⚠️ iFinD 获取失败: {e}")
-            print(f"  📡 尝试使用东方财富备用数据源...")
+            print(f"  📡 正在从东方财富获取 {etf_code} 数据...")
             secid = f"1.{etf_code}"  # 1=上海, 0=深圳
             df = ETFDataFetcher.get_kline_data_eastmoney(secid, days)
             print(f"  ✅ 东方财富数据获取成功: {len(df)} 条")
             return df
+        except Exception as e:
+            print(f"  ⚠️ 东方财富获取失败: {e}")
+        
+        # 2. 尝试使用本地 CSV 缓存
+        try:
+            print(f"  📂 尝试使用本地 CSV 缓存...")
+            df = ETFDataFetcher.get_kline_data_from_ifind(etf_code, days)
+            print(f"  ✅ 本地 CSV 数据获取成功: {len(df)} 条")
+            return df
+        except Exception as e:
+            print(f"  ⚠️ 本地 CSV 获取失败: {e}")
+        
+        # 3. 尝试使用 akshare（A股专用）
+        if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE:
+            try:
+                print(f"  📡 正在从 akshare 获取 {etf_code} 数据...")
+                import akshare as ak
+                df = ak.fund_etf_hist_em(symbol=etf_code, period="daily", 
+                                          start_date="20240101", adjust="qfq")
+                if len(df) >= days:
+                    df = df.tail(days).reset_index(drop=True)
+                df = df.rename(columns={
+                    '日期': 'date', '开盘': 'open', '收盘': 'close',
+                    '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
+                })
+                df['date'] = pd.to_datetime(df['date'])
+                print(f"  ✅ akshare 数据获取成功: {len(df)} 条")
+                return df
+            except Exception as e:
+                print(f"  ⚠️ akshare 获取失败: {e}")
+        
+        # 4. 尝试使用 yfinance（国际数据源）
+        if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
+            try:
+                print(f"  📡 正在从 yfinance 获取 {etf_code}.SS 数据...")
+                import yfinance as yf
+                ticker = yf.Ticker(f"{etf_code}.SS")
+                df = ticker.history(period="6mo")
+                if len(df) >= days:
+                    df = df.tail(days).reset_index(drop=True)
+                df = df.rename(columns={
+                    'Open': 'open', 'Close': 'close', 'High': 'high', 
+                    'Low': 'low', 'Volume': 'volume'
+                })
+                df['date'] = df.index
+                df['amount'] = df['volume'] * df['close']
+                print(f"  ✅ yfinance 数据获取成功: {len(df)} 条")
+                return df
+            except Exception as e:
+                print(f"  ⚠️ yfinance 获取失败: {e}")
+        
+        # 5. 所有数据源失败
+        raise FileNotFoundError(f"所有数据源均失败，请检查网络连接或手动提供数据")
 
 
 # ============ 技术指标模块 ============
