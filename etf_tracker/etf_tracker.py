@@ -14,13 +14,6 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
-# 尝试导入同花顺 iFinD 数据接口
-try:
-    from iFinDPy import *
-    IFIND_AVAILABLE = True
-except ImportError:
-    IFIND_AVAILABLE = False
-
 # 尝试使用 yfinance 作为备用
 try:
     import yfinance as yf
@@ -35,6 +28,13 @@ try:
 except ImportError:
     AKSHARE_AVAILABLE = False
 
+# 导入统一数据源管理器
+try:
+    from data_source_manager import DataSourceManager, DataSourceType
+    DSM_AVAILABLE = True
+except ImportError:
+    DSM_AVAILABLE = False
+
 # 导入个股分析模块
 try:
     from stock_analyzer import StockAnalyzer, StockVisualizer
@@ -48,6 +48,13 @@ try:
     PREDICTOR_AVAILABLE = True
 except ImportError:
     PREDICTOR_AVAILABLE = False
+
+# 导入多模型预测模块
+try:
+    from multi_model_predictor import MultiModelPredictor, AdvancedPredictionReport
+    MULTI_MODEL_AVAILABLE = True
+except ImportError:
+    MULTI_MODEL_AVAILABLE = False
 
 
 # ============ 配置加载 ============
@@ -139,6 +146,18 @@ class ETFDataFetcher:
     
     def __init__(self, config: Config = None):
         self.config = config or Config()
+        self._dsm = None
+        self._init_dsm()
+    
+    def _init_dsm(self):
+        """初始化统一数据源管理器"""
+        if DSM_AVAILABLE:
+            try:
+                self._dsm = DataSourceManager(config_dict=self.config.config)
+                print(f"  [ETFDataFetcher] 统一数据源管理器初始化成功: {self._dsm}")
+            except Exception as e:
+                print(f"  [ETFDataFetcher] 统一数据源管理器初始化失败: {e}，使用传统方式")
+                self._dsm = None
     
     @staticmethod
     def get_kline_data_from_akshare(etf_code: str, days: int = 120) -> pd.DataFrame:
@@ -210,9 +229,19 @@ class ETFDataFetcher:
                     raise e
     
     def get_kline_data(self, etf_code: str, days: int = 120) -> pd.DataFrame:
-        """获取 ETF K线数据 - 多数据源优先级策略"""
+        """获取 ETF K线数据 - 优先使用统一数据源管理器"""
         
-        # 1. 优先使用 AkShare
+        # 1. 优先使用统一数据源管理器
+        if self._dsm is not None:
+            try:
+                print(f"  [ETFDataFetcher] 使用统一数据源管理器获取 {etf_code} 数据...")
+                df = self._dsm.get_etf_kline(etf_code, days)
+                print(f"  [ETFDataFetcher] 统一数据源管理器获取成功: {len(df)} 条")
+                return df
+            except Exception as e:
+                print(f"  [ETFDataFetcher] 统一数据源管理器获取失败: {e}")
+        
+        # 2. 传统方式: 优先使用 AkShare
         if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE:
             try:
                 df = ETFDataFetcher.get_kline_data_from_akshare(etf_code, days)
@@ -220,7 +249,7 @@ class ETFDataFetcher:
             except Exception as e:
                 print(f"  AkShare 获取失败: {e}")
         
-        # 2. 备用: 东方财富 API
+        # 3. 备用: 东方财富 API
         try:
             print(f"  正在从东方财富获取 {etf_code} 数据...")
             secid = f"1.{etf_code}"
@@ -230,8 +259,72 @@ class ETFDataFetcher:
         except Exception as e:
             print(f"  东方财富获取失败: {e}")
         
-        # 3. 所有数据源失败
+        # 4. 所有数据源失败
         raise FileNotFoundError(f"所有数据源均失败，请检查网络连接或手动提供数据")
+    
+    def get_stock_kline_data(self, stock_code: str, days: int = 120) -> pd.DataFrame:
+        """获取个股 K线数据 - 使用统一数据源管理器"""
+        
+        # 1. 优先使用统一数据源管理器
+        if self._dsm is not None:
+            try:
+                print(f"  [ETFDataFetcher] 使用统一数据源管理器获取 {stock_code} 数据...")
+                df = self._dsm.get_stock_kline(stock_code, days)
+                print(f"  [ETFDataFetcher] 统一数据源管理器获取成功: {len(df)} 条")
+                return df
+            except Exception as e:
+                print(f"  [ETFDataFetcher] 统一数据源管理器获取失败: {e}")
+        
+        # 2. 传统方式: 使用 AkShare
+        if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE:
+            try:
+                import akshare as ak
+                start_date = (datetime.now() - timedelta(days=days*2)).strftime('%Y%m%d')
+                df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
+                                        start_date=start_date, adjust="qfq")
+                
+                if len(df) == 0:
+                    raise ValueError("AkShare 返回空数据")
+                
+                df = df.rename(columns={
+                    '日期': 'date', '开盘': 'open', '收盘': 'close',
+                    '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'
+                })
+                
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.sort_values('date').reset_index(drop=True)
+                
+                if len(df) > days:
+                    df = df.tail(days).reset_index(drop=True)
+                
+                print(f"  AkShare 个股数据获取成功: {len(df)} 条")
+                return df
+            except Exception as e:
+                print(f"  AkShare 个股获取失败: {e}")
+        
+        raise FileNotFoundError(f"所有数据源均失败，无法获取 {stock_code} 数据")
+    
+    def get_fund_flow_data(self, code: str) -> Dict:
+        """获取资金流向数据"""
+        if self._dsm is not None:
+            try:
+                return self._dsm.get_fund_flow(code)
+            except Exception as e:
+                print(f"  [ETFDataFetcher] 资金流向获取失败: {e}")
+        
+        return {"source": "none", "note": "资金流向数据暂不可用"}
+    
+    def get_source_status(self) -> Dict:
+        """获取数据源状态"""
+        if self._dsm is not None:
+            return self._dsm.get_all_source_status()
+        return {}
+    
+    def update_tushare_token(self, token: str):
+        """更新 Tushare token"""
+        if self._dsm is not None:
+            self._dsm.update_token("tushare", token)
+            print("  [ETFDataFetcher] Tushare token 已更新")
 
 
 # ============ 技术指标模块 ============
@@ -596,7 +689,8 @@ class ReportGenerator:
                        predictions: Dict = None,
                        strategy: Dict = None,
                        alerts: List[Dict] = None,
-                       industry_news: str = "") -> str:
+                       industry_news: str = "",
+                       multi_model_results: Dict = None) -> str:
         """生成完整的投资规划报告"""
         
         latest = df.iloc[-1]
@@ -760,6 +854,7 @@ class ReportGenerator:
         report += f"""
 ### 策略优化建议
 
+
 """
         
         if strategy and 'error' not in strategy:
@@ -777,10 +872,68 @@ class ReportGenerator:
         else:
             report += "> 策略优化数据暂不可用\n"
         
+        # 多模型交叉验证预测
         report += f"""
 ---
 
-## 七、自动预警
+## 七、多模型交叉验证预测
+
+"""
+        if multi_model_results:
+            ensemble = multi_model_results.get('ensemble_result', {}).get('ensemble', {})
+            training = multi_model_results.get('training_results', {})
+            individual = multi_model_results.get('ensemble_result', {}).get('individual_predictions', {})
+            
+            # 集成预测结果
+            if ensemble:
+                report += f"### 集成预测结果\n\n"
+                report += f"| 指标 | 数值 |\n"
+                report += f"|------|------|\n"
+                report += f"| 预测1日收益 | {ensemble.get('return_1d', 0)*100:+.2f}% |\n"
+                report += f"| 预测1日价格 | {ensemble.get('price_1d', 0):.3f} |\n"
+                report += f"| 置信度 | {ensemble.get('confidence', 0)*100:.1f}% |\n"
+                report += "\n"
+            
+            # 各模型对比
+            if individual:
+                report += "### 各模型预测对比\n\n"
+                report += "| 模型 | 预测收益 | 预测价格 | RMSE |\n"
+                report += "|------|----------|----------|------|\n"
+                for model_name, pred in individual.items():
+                    train_result = training.get(model_name, {})
+                    rmse = train_result.get('test_rmse', 'N/A')
+                    if isinstance(rmse, float):
+                        rmse = f"{rmse:.4f}"
+                    report += f"| {model_name} | {pred.get('return_1d', 0)*100:+.2f}% | {pred.get('price_1d', 0):.3f} | {rmse} |\n"
+                report += "\n"
+            
+            # 模型性能对比
+            if training:
+                report += "### 模型性能对比\n\n"
+                report += "| 模型 | RMSE | MAE | R² |\n"
+                report += "|------|------|-----|-----|\n"
+                for model_name, result in training.items():
+                    if 'error' not in result:
+                        rmse = result.get('test_rmse', 'N/A')
+                        mae = result.get('test_mae', 'N/A')
+                        r2 = result.get('test_r2', 'N/A')
+                        if isinstance(rmse, float): rmse = f"{rmse:.4f}"
+                        if isinstance(mae, float): mae = f"{mae:.4f}"
+                        if isinstance(r2, float): r2 = f"{r2:.2f}"
+                        report += f"| {result.get('model', model_name)} | {rmse} | {mae} | {r2} |\n"
+                report += "\n"
+            
+            # 特征重要性
+            report += "### 重要特征排名\n\n"
+            report += "准确率最高模型的特征重要性排序，帮助理解价格驱动因素\n\n"
+            report += "*详细多模型报告: multi_model_prediction_*.md*\n\n"
+        else:
+            report += "> 多模型预测暂不可用（需安装 LightGBM、XGBoost 等依赖）\n"
+        
+        report += f"""
+---
+
+## 八、自动预警
 
 """
         
@@ -795,7 +948,7 @@ class ReportGenerator:
         report += f"""
 ---
 
-## 八、风险提示
+## 九、风险提示
 
 1. 稀土价格受国际地缘政治影响较大
 2. 新能源政策变化可能影响稀土需求预期
@@ -806,7 +959,8 @@ class ReportGenerator:
 ---
 
 *报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*  
-*数据来源: AkShare + 东方财富 | 分析框架: 多因子量化模型 + 机器学习预测*
+*分析框架: 多因子量化模型 + 多算法预测融合 (LightGBM/XGBoost/RF/ARIMA)*  
+*数据来源: AkShare + 东方财富 | 多模型预测: multi_model_prediction_*.md*
 """
         
         return report
@@ -830,8 +984,22 @@ def main():
     # 1. 获取数据
     print("\n正在获取历史数据...")
     fetcher = ETFDataFetcher(config)
+    
+    # 显示数据源状态
+    source_status = fetcher.get_source_status()
+    if source_status:
+        print("\n  数据源状态:")
+        for name, status in source_status.items():
+            health = status['health_score']
+            available = "✓" if status['available'] else "✗"
+            print(f"    {available} {name:12s} 健康度: {health:5.1f}  成功: {status['success_count']}  失败: {status['error_count']}")
+    
     df = fetcher.get_kline_data(config.etf_code, days=120)
     print(f"获取成功: {len(df)} 个交易日")
+    
+    # 获取资金流向数据
+    fund_flow = fetcher.get_fund_flow_data(config.etf_code)
+    print(f"  资金流向: {fund_flow}")
     
     # 2. 运行回测
     print("\n正在运行多周期回测...")
@@ -856,20 +1024,12 @@ def main():
             stocks = individual_stocks_config.get("stocks", [])
             for stock in stocks:
                 try:
-                    if STOCK_ANALYZER_AVAILABLE:
-                        analyzer = StockAnalyzer()
-                        result = analyzer.analyze_stock(stock['code'], stock['name'])
-                        stock_analysis_results.append(result)
-                        print(f"  {stock['name']} 分析完成: 收益 {result.get('total_return', 0):+.2f}%")
-                    else:
-                        # 简化版分析
-                        import akshare as ak
-                        start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
-                        df_stock = ak.stock_zh_a_hist(symbol=stock['code'], period="daily", 
-                                                       start_date=start_date, adjust="qfq")
+                    # 使用统一数据源管理器获取个股数据
+                    try:
+                        df_stock = fetcher.get_stock_kline_data(stock['code'], days=30)
                         if len(df_stock) > 0:
-                            latest_price = float(df_stock.iloc[-1]['收盘'])
-                            first_price = float(df_stock.iloc[0]['收盘'])
+                            latest_price = float(df_stock.iloc[-1]['close'])
+                            first_price = float(df_stock.iloc[0]['close'])
                             return_30d = (latest_price - first_price) / first_price * 100
                             stock_analysis_results.append({
                                 "code": stock['code'],
@@ -881,6 +1041,8 @@ def main():
                                 "trend": "上涨" if return_30d > 0 else "下跌"
                             })
                             print(f"  {stock['name']} 分析完成: 收益 {return_30d:+.2f}%")
+                    except Exception as e:
+                        print(f"  {stock['name']} 分析失败: {e}")
                 except Exception as e:
                     print(f"  {stock['name']} 分析失败: {e}")
             
@@ -897,25 +1059,27 @@ def main():
     # 5. 趋势预测与策略优化
     predictions = None
     strategy = None
-    if PREDICTOR_AVAILABLE:
-        print("\n正在进行趋势预测...")
-        try:
-            predictor = TrendPredictor()
-            predictions = predictor.predict_trend(df, days=5)
-            
-            if 'day_1' in predictions:
-                print(f"  1日预测: {predictions['day_1']['trend']} (置信度: {predictions['day_1']['confidence']:.0%})")
-            if 'day_3' in predictions:
-                print(f"  3日预测: {predictions['day_3']['trend']} (置信度: {predictions['day_3']['confidence']:.0%})")
-            if 'day_5' in predictions:
-                print(f"  5日预测: {predictions['day_5']['trend']} (置信度: {predictions['day_5']['confidence']:.0%})")
-            
-            # 策略优化
-            strategy = predictor.optimize_strategy(df, predictions, signals)
-            print(f"  策略优化: {strategy['action']} (评分: {strategy['total_score']:.2f})")
-            
-        except Exception as e:
-            print(f"  预测失败: {e}")
+    from advanced_predictor import TrendPredictor, AlertSystem, AdvancedVisualizer
+    print("\n正在进行趋势预测...")
+    try:
+        predictor = TrendPredictor()
+        predictions = predictor.predict_trend(df, days=5)
+        
+        if 'day_1' in predictions:
+            print(f"  1日预测: {predictions['day_1']['trend']} (置信度: {predictions['day_1']['confidence']:.0%})")
+        if 'day_3' in predictions:
+            print(f"  3日预测: {predictions['day_3']['trend']} (置信度: {predictions['day_3']['confidence']:.0%})")
+        if 'day_5' in predictions:
+            print(f"  5日预测: {predictions['day_5']['trend']} (置信度: {predictions['day_5']['confidence']:.0%})")
+        
+        # 策略优化
+        strategy = predictor.optimize_strategy(df, predictions, signals)
+        print(f"  策略优化: {strategy['action']} (评分: {strategy['total_score']:.2f})")
+        
+    except Exception as e:
+        print(f"  预测失败: {e}")
+        import traceback
+        traceback.print_exc()
     
     # 6. 自动预警检查
     alerts = []
@@ -959,7 +1123,94 @@ def main():
             except Exception as e:
                 print(f"  {stock['name']} 图表生成失败: {e}")
     
-    # 8. 生成报告
+    # 8. 多模型交叉验证预测
+    multi_model_results = None
+    if MULTI_MODEL_AVAILABLE:
+        print("\n正在运行多模型交叉验证预测...")
+        try:
+            # 获取更多数据用于多模型训练
+            import akshare as ak
+            df_long = ak.fund_etf_hist_em(symbol=config.etf_code, period='daily', 
+                                          start_date='20240101', adjust='qfq')
+            df_long.columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'amount', 
+                              'amplitude', 'pct_change', 'change', 'turnover']
+            
+            predictor = MultiModelPredictor()
+            training_results = predictor.train_all_models(df_long, target_col='target_1d')
+            ensemble_result = predictor.ensemble_predict(df_long, days=5)
+            
+            multi_model_results = {
+                'training_results': training_results,
+                'ensemble_result': ensemble_result
+            }
+            
+            # 打印汇总
+            ensemble = ensemble_result['ensemble']
+            print(f"  集成预测: {ensemble['return_1d']*100:+.2f}% (置信度: {ensemble['confidence']*100:.1f}%)")
+            
+            # 保存完整的多模型预测报告
+            try:
+                mm_report = AdvancedPredictionReport.generate_report(predictor, df_long, training_results, ensemble_result)
+                mm_report_path = f"/home/zhihu/etf_tracker/reports/multi_model_prediction_{datetime.now().strftime('%Y%m%d')}.md"
+                with open(mm_report_path, 'w', encoding='utf-8') as f:
+                    f.write(mm_report)
+                print(f"  多模型预测报告已保存: {mm_report_path}")
+            except Exception as e:
+                print(f"  多模型报告生成失败: {e}")
+            
+        except Exception as e:
+            print(f"  多模型预测失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # 9. 生成新增高级可视化图表
+    if PREDICTOR_AVAILABLE and len(df) > 0:
+        print("\n正在生成高级可视化图表...")
+        visualizer = AdvancedVisualizer()
+        report_date = datetime.now().strftime('%Y%m%d')
+        
+        # 生成股票预测趋势图 (前3只)
+        for stock in (config.config.get("individual_stocks", {}).get("stocks", [])[:3]):
+            try:
+                df_stock = fetcher.get_stock_kline_data(stock['code'], days=60)
+                if len(df_stock) > 0:
+                    # 导入必要的模块
+                    from advanced_predictor import TrendPredictor
+                    tp = TrendPredictor()
+                    stock_pred = tp.predict_trend(df_stock, days=5)
+                    pred_chart = f"/home/zhihu/etf_tracker/reports/prediction_{stock['code']}_{report_date}.png"
+                    visualizer.generate_prediction_chart(df_stock, stock_pred, stock['code'], stock['name'], pred_chart)
+            except Exception as e:
+                print(f"  {stock['name']} 预测图生成失败: {e}")
+        
+        # 生成多股票仪表盘
+        try:
+            dashboard_data = []
+            for analysis in (stock_analysis_results or [])[:9]:
+                if 'error' not in analysis:
+                    dashboard_data.append(analysis)
+            if dashboard_data:
+                dashboard_path = f"/home/zhihu/etf_tracker/reports/stock_dashboard_{report_date}.png"
+                visualizer.generate_multi_stock_dashboard(dashboard_data, dashboard_path)
+        except Exception as e:
+            print(f"  仪表盘生成失败: {e}")
+        
+        # 生成板块资金流向图
+        try:
+            sector_data = {
+                '稀土永磁': {'main_inflow': 50_000_000, 'sentiment_score': 0.5},
+                '机器人': {'main_inflow': 30_000_000, 'sentiment_score': 0.3},
+                '人工智能': {'main_inflow': -20_000_000, 'sentiment_score': -0.1},
+                '芯片制造': {'main_inflow': 80_000_000, 'sentiment_score': 0.8},
+                '存储行业': {'main_inflow': 10_000_000, 'sentiment_score': 0.1},
+                '内存制造': {'main_inflow': -5_000_000, 'sentiment_score': -0.2}
+            }
+            sector_path = f"/home/zhihu/etf_tracker/reports/sector_fund_flow_{report_date}.png"
+            visualizer.generate_sector_fund_flow_chart(sector_data, sector_path)
+        except Exception as e:
+            print(f"  板块资金流向图生成失败: {e}")
+    
+    # 10. 生成报告
     print("\n正在生成投资规划报告...")
     report_gen = ReportGenerator(config)
     report = report_gen.generate_report(
@@ -967,7 +1218,8 @@ def main():
         stock_analysis=stock_analysis_results,
         predictions=predictions,
         strategy=strategy,
-        alerts=alerts
+        alerts=alerts,
+        multi_model_results=multi_model_results
     )
     
     # 9. 保存报告

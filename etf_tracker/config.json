@@ -4,6 +4,63 @@
   "tracking_industries": ["机器人", "人工智能", "AI", "芯片制造", "存储行业", "内存制造"],
   "backtest_periods": [30, 60, 90],
   "data_source": "akshare",
+  "data_sources": [
+    {
+      "name": "akshare",
+      "source_type": "akshare",
+      "enabled": true,
+      "priority": 1,
+      "timeout": 15,
+      "retry_count": 3,
+      "retry_delay": 2.0,
+      "token": "",
+      "api_key": ""
+    },
+    {
+      "name": "eastmoney",
+      "source_type": "eastmoney",
+      "enabled": true,
+      "priority": 2,
+      "timeout": 15,
+      "retry_count": 3,
+      "retry_delay": 2.0,
+      "token": "",
+      "api_key": ""
+    },
+    {
+      "name": "tushare",
+      "source_type": "tushare",
+      "enabled": true,
+      "priority": 3,
+      "timeout": 20,
+      "retry_count": 3,
+      "retry_delay": 3.0,
+      "token": "",
+      "api_key": ""
+    },
+    {
+      "name": "baostock",
+      "source_type": "baostock",
+      "enabled": true,
+      "priority": 4,
+      "timeout": 30,
+      "retry_count": 3,
+      "retry_delay": 2.0,
+      "token": "",
+      "api_key": ""
+    },
+    {
+      "name": "yfinance",
+      "source_type": "yfinance",
+      "enabled": true,
+      "priority": 5,
+      "timeout": 20,
+      "retry_count": 3,
+      "retry_delay": 2.0,
+      "token": "",
+      "api_key": ""
+    }
+  ],
   "wechat_push": {
     "enabled": true,
     "channel": "hermes"
