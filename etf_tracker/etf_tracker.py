@@ -56,6 +56,20 @@ try:
 except ImportError:
     MULTI_MODEL_AVAILABLE = False
 
+# 导入国际市场模块
+try:
+    from international_market import InternationalMarketFetcher
+    INTERNATIONAL_MARKET_AVAILABLE = True
+except ImportError:
+    INTERNATIONAL_MARKET_AVAILABLE = False
+    class InternationalMarketFetcher:
+        def fetch_all(self, days=30):
+            return {}
+        def generate_market_summary(self):
+            return ""
+        def generate_market_analysis(self):
+            return ""
+
 
 # 占位类，避免导入失败时引用错误
 if not MULTI_MODEL_AVAILABLE:
@@ -1242,7 +1256,9 @@ class ReportGenerator:
     def generate_multi_etf_report(self, analyzer_results: List[Dict], sector_ranking: pd.DataFrame,
                                    top_etfs_detail: List[Dict] = None,
                                    top_stocks_by_sector: Dict[str, List[Dict]] = None,
-                                   report_date: str = None) -> str:
+                                   report_date: str = None,
+                                   international_summary: str = "",
+                                   international_analysis: str = "") -> str:
         """生成多板块 ETF 综合投资报告"""
         date = report_date or datetime.now().strftime('%Y-%m-%d')
         
@@ -1252,7 +1268,7 @@ class ReportGenerator:
 > **跟踪 ETF 数量**: {len(analyzer_results)} 只  
 > **数据源**: AkShare + 东方财富 + Baostock + Yahoo Finance  
 > **分析周期**: {'/'.join([str(p) for p in self.config.backtest_periods])}天滚动回测  
-> **覆盖主题**: 机器人 / 人工智能 / AI / 芯片制造 / 半导体设备 / 存储行业 / 内存制造 / 稀土永磁 / 有色金属 / 动力电池 / 银行 / 证券 / 消费 / 医药 / 高股息 / 通信 / 互联网 / 港股科技 / 宽基指数
+> **覆盖主题**: 机器人 / 人工智能 / AI / 芯片制造 / 半导体设备 / 存储行业 / 内存制造 / 稀土永磁 / 有色金属 / 动力电池 / 银行 / 证券 / 消费 / 医药 / 高股息 / 通信 / 互联网 / 港股科技 / 宽基指数 / 美股科技 / 美股大盘 / 美股半导体 / 美股机器人  
 
 ---
 
@@ -1350,10 +1366,24 @@ class ReportGenerator:
                 pred_text = f", 1日预测 {row['1日预测']:+.2f}%" if row['预测置信度'] > 0 else ""
                 report += f"- **{row['板块']}** ({row['主题']}): 60天收益 {row['60天收益']:+.2f}%, 评分 {row['综合评分']:.1f}{pred_text}\n"
         
+        # 国际市场板块
+        if international_summary or international_analysis:
+            report += """
+---
+
+## 四、国际市场环境
+
+"""
+            if international_summary:
+                report += international_summary + "\n\n"
+            if international_analysis:
+                report += "### 对A股影响分析\n\n"
+                report += international_analysis + "\n"
+        
         report += f"""
 ---
 
-## 四、风险提示
+## 五、风险提示
 
 1. 本报告基于历史数据和多模型预测，不构成投资建议
 2. 市场有风险，投资需谨慎
@@ -1466,13 +1496,30 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     analyzer.results = quick_results
     sector_ranking = analyzer.get_sector_ranking()
     
+    # 获取国际市场数据
+    international_data = None
+    international_summary = ""
+    international_analysis = ""
+    if INTERNATIONAL_MARKET_AVAILABLE:
+        try:
+            print("  正在获取国际市场数据...")
+            im_fetcher = InternationalMarketFetcher()
+            international_data = im_fetcher.fetch_all(days=30)
+            international_summary = im_fetcher.generate_market_summary()
+            international_analysis = im_fetcher.generate_market_analysis()
+            print(f"  国际市场数据获取成功: {len(international_data)} 个品种")
+        except Exception as e:
+            print(f"  国际市场数据获取失败: {e}")
+    
     # 构建报告
     report_gen = ReportGenerator(config)
     report = report_gen.generate_multi_etf_report(
         quick_results, sector_ranking,
         top_etfs_detail=top_etfs_detail,
         top_stocks_by_sector=top_stocks_by_sector,
-        report_date=report_date
+        report_date=report_date,
+        international_summary=international_summary,
+        international_analysis=international_analysis
     )
     
     # 保存报告
