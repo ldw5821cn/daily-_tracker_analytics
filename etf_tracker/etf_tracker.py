@@ -1440,7 +1440,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
             from hermes_wechat_pusher import HermesWeChatPusher
             pusher = HermesWeChatPusher()
             summary = _generate_wechat_summary(quick_results, sector_ranking, top_etfs_detail)
-            pusher.send_message(summary)
+            pusher.send_text_message(summary)
             print("微信推送已发送")
         except Exception as e:
             print(f"微信推送失败: {e}")
