@@ -818,7 +818,11 @@ class YFinanceAdapter(BaseDataAdapter):
             self.status.record_error("yfinance 未安装")
     
     def _convert_code(self, code: str) -> str:
-        """转换A股代码为 Yahoo Finance 格式"""
+        """转换A股/港股代码为 Yahoo Finance 格式"""
+        # 港股代码 (如 0700.HK, 9988.HK)
+        if code.endswith('.HK'):
+            return code[:-3] + '.HK'
+        
         # ETF代码
         if code.startswith('5'):
             return f"{code}.SS"  # 上海

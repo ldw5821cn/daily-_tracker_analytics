@@ -170,13 +170,13 @@ class MultiETFAnalyzer:
         results = []
         for stock in top_stocks:
             try:
-                df_stock = self.fetcher.get_stock_kline_data(stock['code'], days=60)
-                if df_stock is None or len(df_stock) < 20:
+                df_stock = self.fetcher.get_stock_kline_data(stock['code'], days=120)
+                if df_stock is None or len(df_stock) < 40:
                     continue
                 
                 latest_price = float(df_stock.iloc[-1]['close'])
-                first_price = float(df_stock.iloc[0]['close'])
-                return_30d = (latest_price - first_price) / first_price * 100
+                first_price_30 = float(df_stock.iloc[-30]['close']) if len(df_stock) >= 30 else float(df_stock.iloc[0]['close'])
+                return_30d = (latest_price - first_price_30) / first_price_30 * 100
                 
                 # 多模型预测
                 multi_model = None
@@ -464,7 +464,31 @@ class ETFDataFetcher:
         raise FileNotFoundError(f"所有数据源均失败，请检查网络连接或手动提供数据")
     
     def get_stock_kline_data(self, stock_code: str, days: int = 120) -> pd.DataFrame:
-        """获取个股 K线数据 - 使用统一数据源管理器"""
+        """获取个股 K线数据 - 使用统一数据源管理器，支持港股"""
+        
+        # 港股代码使用 Yahoo Finance
+        if stock_code.endswith('.HK'):
+            if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
+                try:
+                    print(f"  [ETFDataFetcher] 使用 Yahoo Finance 获取港股 {stock_code} 数据...")
+                    import yfinance as yf
+                    ticker = yf.Ticker(stock_code)
+                    df = ticker.history(period=f"{days*2}d")
+                    if len(df) == 0:
+                        raise ValueError("Yahoo Finance 返回空数据")
+                    df = df.reset_index()
+                    df = df.rename(columns={
+                        'Date': 'date', 'Open': 'open', 'Close': 'close',
+                        'High': 'high', 'Low': 'low', 'Volume': 'volume'
+                    })
+                    df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
+                    df = df.sort_values('date').reset_index(drop=True)
+                    if len(df) > days:
+                        df = df.tail(days).reset_index(drop=True)
+                    print(f"  Yahoo Finance 港股数据获取成功: {len(df)} 条")
+                    return df
+                except Exception as e:
+                    print(f"  Yahoo Finance 港股获取失败: {e}")
         
         # 1. 优先使用统一数据源管理器
         if self._dsm is not None:
@@ -477,7 +501,7 @@ class ETFDataFetcher:
                 print(f"  [ETFDataFetcher] 统一数据源管理器获取失败: {e}")
         
         # 2. 传统方式: 使用 AkShare
-        if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE:
+        if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE and not stock_code.endswith('.HK'):
             try:
                 import akshare as ak
                 start_date = (datetime.now() - timedelta(days=days*2)).strftime('%Y%m%d')
@@ -880,6 +904,7 @@ class ReportGenerator:
         self.config = config
         self.etf_code = config.etf_code
         self.etf_name = config.etf_name
+        self.report_title = config.report_title
         self.date = datetime.now().strftime('%Y-%m-%d')
     
     def generate_report(self, backtest_results: List[Dict], signals: Dict, 
@@ -1165,15 +1190,318 @@ class ReportGenerator:
 """
         
         return report
+    
+    def generate_multi_etf_report(self, analyzer_results: List[Dict], sector_ranking: pd.DataFrame,
+                                   top_etfs_detail: List[Dict] = None,
+                                   top_stocks_by_sector: Dict[str, List[Dict]] = None,
+                                   report_date: str = None) -> str:
+        """生成多板块 ETF 综合投资报告"""
+        date = report_date or datetime.now().strftime('%Y-%m-%d')
+        
+        report = f"""# {self.report_title}
+
+> **报告日期**: {date}  
+> **跟踪 ETF 数量**: {len(analyzer_results)} 只  
+> **数据源**: AkShare + 东方财富 + Baostock + Yahoo Finance  
+> **分析周期**: {'/'.join([str(p) for p in self.config.backtest_periods])}天滚动回测  
+> **覆盖主题**: 机器人 / 人工智能 / AI / 芯片制造 / 半导体设备 / 存储行业 / 内存制造 / 稀土永磁 / 有色金属 / 动力电池 / 银行 / 证券 / 消费 / 医药 / 高股息 / 通信 / 互联网 / 港股科技 / 宽基指数
+
+---
+
+## 一、板块综合排名
+
+| 排名 | 板块 | 主题 | 最新价 | 60天收益 | 60天夏普 | 综合评分 | 信号 | 1日预测 | 置信度 |
+|------|------|------|--------|----------|----------|----------|------|---------|--------|
+"""
+        
+        for idx, row in sector_ranking.iterrows():
+            has_pred = row['预测置信度'] > 0
+            if has_pred:
+                pred_emoji = "📈" if row['1日预测'] > 0.3 else "📉" if row['1日预测'] < -0.3 else "➖"
+                pred_str = f"{pred_emoji} {row['1日预测']:+.2f}%"
+                conf_str = f"{row['预测置信度']:.1f}%"
+            else:
+                pred_str = "-"
+                conf_str = "-"
+            signal_str = str(row['信号']) if pd.notna(row['信号']) else '-'
+            report += f"| {idx+1} | {row['板块']} | {row['主题']} | {row['最新价']:.3f} | {row['60天收益']:+.2f}% | {row['60天夏普']:.2f} | {row['综合评分']:.1f} | {signal_str} | {pred_str} | {conf_str} |\n"
+        
+        report += """
+---
+
+## 二、重点板块深度分析
+
+"""
+        
+        # 详细分析前5名 ETF
+        if top_etfs_detail:
+            for rank, result in enumerate(top_etfs_detail, 1):
+                if 'error' in result:
+                    continue
+                
+                report += f"""### {rank}. {result['name']} ({result['code']}) — {result['theme']}
+
+| 项目 | 内容 |
+|------|------|
+| 最新价 | {result['current_price']:.3f} |
+| 综合评分 | {result['signals']['score']:.1f}/100 ({result['signals']['overall']}) |
+| 建议仓位 | {result['position']['suggested_position']} |
+
+**多周期回测结果**:
+
+| 周期 | 收益 | 最大回撤 | 夏普比率 | 信号 |
+|------|------|----------|----------|------|
+"""
+                for bt in result['backtest']:
+                    report += f"| {bt['period_days']}天 | {bt['total_return']:+.2f}% | {bt['max_drawdown']:.2f}% | {bt['sharpe_ratio']:.2f} | {bt['ma_trend']} |\n"
+                
+                # 多模型预测
+                if result.get('multi_model'):
+                    ensemble = result['multi_model']['ensemble']
+                    report += f"""
+**多模型预测**: 1日收益 {ensemble.get('return_1d', 0)*100:+.2f}% (置信度 {ensemble.get('confidence', 0)*100:.1f}%)
+
+"""
+                
+                # Top 个股
+                sector = result.get('sector', '')
+                if top_stocks_by_sector and sector in top_stocks_by_sector:
+                    stocks = top_stocks_by_sector[sector]
+                    if stocks:
+                        report += "**Top 成分股跟踪**:\n\n"
+                        report += "| 股票 | 代码 | 30天收益 | 1日预测 | 趋势 |\n"
+                        report += "|------|------|----------|---------|------|\n"
+                        for s in stocks[:5]:
+                            pred_str = '-'
+                            if s.get('multi_model'):
+                                pred_str = f"{s['multi_model'].get('return_1d', 0)*100:+.2f}%"
+                            report += f"| {s['name']} | {s['code']} | {s['return_30d']:+.2f}% | {pred_str} | {s['trend']} |\n"
+                        report += "\n"
+                
+                report += "---\n\n"
+        
+        # 投资建议汇总
+        if not sector_ranking.empty:
+            top3 = sector_ranking.head(3)
+            bottom3 = sector_ranking.tail(3)
+            
+            report += """## 三、投资建议汇总
+
+### 强势板块（重点关注）
+
+"""
+            for idx, row in top3.iterrows():
+                pred_text = f", 1日预测 {row['1日预测']:+.2f}%" if row['预测置信度'] > 0 else ""
+                report += f"- **{row['板块']}** ({row['主题']}): 60天收益 {row['60天收益']:+.2f}%, 评分 {row['综合评分']:.1f}{pred_text}\n"
+            
+            report += """
+### 弱势板块（短期回避）
+
+"""
+            for idx, row in bottom3.iterrows():
+                pred_text = f", 1日预测 {row['1日预测']:+.2f}%" if row['预测置信度'] > 0 else ""
+                report += f"- **{row['板块']}** ({row['主题']}): 60天收益 {row['60天收益']:+.2f}%, 评分 {row['综合评分']:.1f}{pred_text}\n"
+        
+        report += f"""
+---
+
+## 四、风险提示
+
+1. 本报告基于历史数据和多模型预测，不构成投资建议
+2. 市场有风险，投资需谨慎
+3. 预测置信度低时建议观望
+4. 国际地缘政治、政策变化可能影响板块走势
+5. 港股 ETF 受汇率和海外市场影响较大
+
+---
+
+*报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*  
+*分析框架: 多因子量化模型 + 多模型预测融合 (LightGBM/XGBoost/RF/ARIMA/LSTM)*  
+*数据来源: AkShare + 东方财富 + Baostock + Yahoo Finance*
+"""
+        
+        return report
 
 
 # ============ 主程序 ============
+
+def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int = 5,
+                                analyze_top_stocks: bool = True,
+                                enable_wechat_push: bool = True) -> str:
+    """
+    生成多板块 ETF 每日综合报告
+    """
+    config = config or Config()
+    report_date = datetime.now().strftime('%Y-%m-%d')
+    
+    print("=" * 70)
+    print(f"多板块 ETF 综合报告生成")
+    print(f"跟踪标的: {len(config.etfs)} 只 ETF")
+    print(f"报告日期: {report_date}")
+    print("=" * 70)
+    
+    analyzer = MultiETFAnalyzer(config)
+    
+    # 1. 快速扫描所有 ETF
+    print("\n【1/4】快速扫描所有 ETF...")
+    quick_results = []
+    for etf in config.etfs:
+        try:
+            df = analyzer.fetcher.get_kline_data(etf['code'], days=120)
+            if df is None or len(df) < 30:
+                continue
+            engine = BacktestEngine(df)
+            backtest = engine.run_all_backtests(config.backtest_periods)
+            signal_gen = SignalGenerator(backtest, df)
+            signals = signal_gen.generate_signals()
+            position = signal_gen.calculate_position_sizing()
+            quick_results.append({
+                'code': etf['code'],
+                'name': etf['name'],
+                'theme': etf.get('theme', '-'),
+                'sector': etf.get('sector', '-'),
+                'current_price': df['close'].iloc[-1],
+                'backtest': backtest,
+                'signals': signals,
+                'position': position,
+                'df': df,
+                'etf_config': etf
+            })
+            bt60 = next((b for b in backtest if b['period_days'] == 60), {})
+            print(f"  {etf['name']}: 60天{bt60.get('total_return', 0):+.2f}% 评分{signals['score']:.1f}")
+        except Exception as e:
+            print(f"  {etf['name']} 扫描失败: {e}")
+    
+    if not quick_results:
+        print("⚠️ 没有 ETF 扫描成功，退出")
+        return ""
+    
+    # 2. 排序并选择前 N 做深度分析
+    quick_results.sort(key=lambda x: x['signals']['score'], reverse=True)
+    top_etfs = quick_results[:deep_analysis_top_n]
+    
+    print(f"\n【2/4】对前 {len(top_etfs)} 名 ETF 进行多模型深度预测...")
+    top_etfs_detail = []
+    for r in top_etfs:
+        try:
+            if MULTI_MODEL_AVAILABLE:
+                predictor = MultiModelPredictor()
+                training = predictor.train_all_models(r['df'], target_col='target_1d')
+                ensemble = predictor.ensemble_predict(r['df'], days=5)
+                r['multi_model'] = {
+                    'ensemble': ensemble['ensemble'],
+                    'individual': ensemble['individual_predictions'],
+                    'training': training
+                }
+                print(f"  {r['name']}: 1日预测 {ensemble['ensemble'].get('return_1d', 0)*100:+.2f}% (置信度 {ensemble['ensemble'].get('confidence', 0)*100:.1f}%)")
+            top_etfs_detail.append(r)
+        except Exception as e:
+            print(f"  {r['name']} 深度预测失败: {e}")
+            top_etfs_detail.append(r)
+    
+    # 3. 分析重点 ETF 的 Top10 成分股
+    top_stocks_by_sector = {}
+    if analyze_top_stocks:
+        print(f"\n【3/4】分析重点 ETF 的 Top10 成分股...")
+        for r in top_etfs_detail:
+            try:
+                etf_config = r['etf_config']
+                stocks = analyzer.analyze_top_stocks(etf_config, max_stocks=10)
+                if stocks:
+                    top_stocks_by_sector[r['sector']] = stocks
+                    print(f"  {r['name']}: 分析了 {len(stocks)} 只成分股")
+            except Exception as e:
+                print(f"  {r['name']} 成分股分析失败: {e}")
+    
+    # 4. 生成板块排名
+    print("\n【4/4】生成板块排名和综合报告...")
+    analyzer.results = quick_results
+    sector_ranking = analyzer.get_sector_ranking()
+    
+    # 构建报告
+    report_gen = ReportGenerator(config)
+    report = report_gen.generate_multi_etf_report(
+        quick_results, sector_ranking,
+        top_etfs_detail=top_etfs_detail,
+        top_stocks_by_sector=top_stocks_by_sector,
+        report_date=report_date
+    )
+    
+    # 保存报告
+    report_path = f"/home/zhihu/etf_tracker/reports/multi_etf_report_{report_date}.md"
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write(report)
+    print(f"\n报告已保存: {report_path}")
+    
+    # 5. 微信推送
+    if enable_wechat_push and config.features.get('wechat_push', True):
+        try:
+            from hermes_wechat_pusher import HermesWeChatPusher
+            pusher = HermesWeChatPusher()
+            summary = _generate_wechat_summary(quick_results, sector_ranking, top_etfs_detail)
+            pusher.send_message(summary)
+            print("微信推送已发送")
+        except Exception as e:
+            print(f"微信推送失败: {e}")
+    
+    print("\n" + "=" * 70)
+    print("多板块 ETF 综合报告生成完成!")
+    print("=" * 70)
+    
+    return report_path
+
+
+def _generate_wechat_summary(quick_results: List[Dict], sector_ranking: pd.DataFrame,
+                              top_etfs_detail: List[Dict]) -> str:
+    """生成微信推送摘要（控制在 1200 字以内）"""
+    date = datetime.now().strftime('%Y-%m-%d')
+    
+    summary = f"【{date} 多板块 ETF 投资早报】\n\n"
+    
+    if not sector_ranking.empty:
+        n = min(3, len(sector_ranking))
+        top3 = sector_ranking.head(n)
+        # 弱势板块从后往前取，避免与强势板块重复
+        bottom_start = max(len(sector_ranking) - n, n)
+        bottom3 = sector_ranking.iloc[bottom_start:]
+        
+        summary += "\n🏆 强势板块 TOP3:\n"
+        for idx, row in top3.iterrows():
+            summary += f"{idx+1}. {row['板块']}: 60天{row['60天收益']:+.2f}%, 评分{row['综合评分']:.1f}\n"
+        
+        if len(bottom3) > 0 and not bottom3.index.equals(top3.index):
+            summary += "\n📉 弱势板块 BOT3:\n"
+            total = len(sector_ranking)
+            for i, (idx, row) in enumerate(bottom3.iterrows()):
+                rank = total - len(bottom3) + 1 + i
+                summary += f"{rank}. {row['板块']}: 60天{row['60天收益']:+.2f}%, 评分{row['综合评分']:.1f}\n"
+    
+    if top_etfs_detail:
+        summary += "\n🔮 重点板块预测:\n"
+        for r in top_etfs_detail[:3]:
+            if r.get('multi_model'):
+                ensemble = r['multi_model']['ensemble']
+                summary += f"• {r['name']}: 1日{ensemble.get('return_1d', 0)*100:+.2f}% (置信度{ensemble.get('confidence', 0)*100:.1f}%)\n"
+    
+    summary += "\n⚠️ 风险提示: 本报告仅供参考，不构成投资建议。"
+    
+    # 控制长度
+    if len(summary) > 1200:
+        summary = summary[:1150] + "...\n\n详细报告见文件。"
+    
+    return summary
+
 
 def main():
     """主程序: 生成每日投资规划报告"""
     
     # 加载配置
     config = Config()
+    
+    # 如果配置中启用了多 ETF 分析，则生成多板块综合报告
+    if config.features.get('multi_etf', True) and len(config.etfs) > 1:
+        return run_multi_etf_daily_report(config)
     
     print("=" * 60)
     print(f"ETF 趋势跟踪系统启动")
