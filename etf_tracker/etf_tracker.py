@@ -430,7 +430,31 @@ class ETFDataFetcher:
                     raise e
     
     def get_kline_data(self, etf_code: str, days: int = 120) -> pd.DataFrame:
-        """获取 ETF K线数据 - 优先使用统一数据源管理器"""
+        """获取 ETF K线数据 - 优先使用统一数据源管理器，支持美股"""
+        
+        # 美股代码直接走 Yahoo Finance
+        if etf_code.isalpha() or (len(etf_code) <= 5 and etf_code.isupper()):
+            if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
+                try:
+                    print(f"  [ETFDataFetcher] 使用 Yahoo Finance 获取美股 {etf_code} 数据...")
+                    import yfinance as yf
+                    ticker = yf.Ticker(etf_code)
+                    df = ticker.history(period=f"{days*2}d")
+                    if len(df) == 0:
+                        raise ValueError("Yahoo Finance 返回空数据")
+                    df = df.reset_index()
+                    df = df.rename(columns={
+                        'Date': 'date', 'Open': 'open', 'Close': 'close',
+                        'High': 'high', 'Low': 'low', 'Volume': 'volume'
+                    })
+                    df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
+                    df = df.sort_values('date').reset_index(drop=True)
+                    if len(df) > days:
+                        df = df.tail(days).reset_index(drop=True)
+                    print(f"  Yahoo Finance 美股数据获取成功: {len(df)} 条")
+                    return df
+                except Exception as e:
+                    print(f"  Yahoo Finance 美股获取失败: {e}")
         
         # 1. 优先使用统一数据源管理器
         if self._dsm is not None:
@@ -464,7 +488,31 @@ class ETFDataFetcher:
         raise FileNotFoundError(f"所有数据源均失败，请检查网络连接或手动提供数据")
     
     def get_stock_kline_data(self, stock_code: str, days: int = 120) -> pd.DataFrame:
-        """获取个股 K线数据 - 使用统一数据源管理器，支持港股"""
+        """获取个股 K线数据 - 使用统一数据源管理器，支持港股/美股"""
+        
+        # 美股代码直接走 Yahoo Finance
+        if stock_code.isalpha() or (len(stock_code) <= 5 and stock_code.isupper()) or '-' in stock_code:
+            if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
+                try:
+                    print(f"  [ETFDataFetcher] 使用 Yahoo Finance 获取美股 {stock_code} 数据...")
+                    import yfinance as yf
+                    ticker = yf.Ticker(stock_code)
+                    df = ticker.history(period=f"{days*2}d")
+                    if len(df) == 0:
+                        raise ValueError("Yahoo Finance 返回空数据")
+                    df = df.reset_index()
+                    df = df.rename(columns={
+                        'Date': 'date', 'Open': 'open', 'Close': 'close',
+                        'High': 'high', 'Low': 'low', 'Volume': 'volume'
+                    })
+                    df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
+                    df = df.sort_values('date').reset_index(drop=True)
+                    if len(df) > days:
+                        df = df.tail(days).reset_index(drop=True)
+                    print(f"  Yahoo Finance 美股个股数据获取成功: {len(df)} 条")
+                    return df
+                except Exception as e:
+                    print(f"  Yahoo Finance 美股个股获取失败: {e}")
         
         # 港股代码使用 Yahoo Finance
         if stock_code.endswith('.HK'):

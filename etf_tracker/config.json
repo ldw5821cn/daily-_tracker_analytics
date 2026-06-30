@@ -25,7 +25,11 @@
     "医疗器械",
     "创新药",
     "人工智能",
-    "互联网"
+    "互联网",
+    "美股科技",
+    "美股大盘",
+    "美股半导体",
+    "美股机器人"
   ],
   "backtest_periods": [
     30,
@@ -1598,6 +1602,270 @@
           "code": "601888",
           "name": "中国中免",
           "reason": "免税龙头"
+        }
+      ]
+    },
+    {
+      "code": "QQQ",
+      "name": "纳斯达克100ETF",
+      "theme": "美股科技",
+      "sector": "美股科技",
+      "market": "us",
+      "leading_stocks": [
+        "苹果",
+        "微软",
+        "英伟达",
+        "亚马逊",
+        "谷歌"
+      ],
+      "top_stocks": [
+        {
+          "code": "AAPL",
+          "name": "苹果",
+          "reason": "全球消费电子龙头"
+        },
+        {
+          "code": "MSFT",
+          "name": "微软",
+          "reason": "云计算+AI龙头"
+        },
+        {
+          "code": "NVDA",
+          "name": "英伟达",
+          "reason": "AI算力芯片龙头"
+        },
+        {
+          "code": "AMZN",
+          "name": "亚马逊",
+          "reason": "电商+云计算龙头"
+        },
+        {
+          "code": "GOOGL",
+          "name": "谷歌",
+          "reason": "搜索+AI龙头"
+        },
+        {
+          "code": "META",
+          "name": "Meta",
+          "reason": "社交媒体+元宇宙"
+        },
+        {
+          "code": "TSLA",
+          "name": "特斯拉",
+          "reason": "电动车+能源"
+        },
+        {
+          "code": "AVGO",
+          "name": "博通",
+          "reason": "芯片+软件"
+        },
+        {
+          "code": "PEP",
+          "name": "百事",
+          "reason": "食品饮料"
+        },
+        {
+          "code": "COST",
+          "name": "好市多",
+          "reason": "会员制零售"
+        }
+      ]
+    },
+    {
+      "code": "SPY",
+      "name": "标普500ETF",
+      "theme": "美股大盘",
+      "sector": "美股大盘",
+      "market": "us",
+      "leading_stocks": [
+        "苹果",
+        "微软",
+        "英伟达",
+        "亚马逊",
+        "伯克希尔"
+      ],
+      "top_stocks": [
+        {
+          "code": "AAPL",
+          "name": "苹果",
+          "reason": "全球市值最大公司"
+        },
+        {
+          "code": "MSFT",
+          "name": "微软",
+          "reason": "云计算+AI"
+        },
+        {
+          "code": "NVDA",
+          "name": "英伟达",
+          "reason": "AI芯片"
+        },
+        {
+          "code": "AMZN",
+          "name": "亚马逊",
+          "reason": "电商云"
+        },
+        {
+          "code": "META",
+          "name": "Meta",
+          "reason": "社交媒体"
+        },
+        {
+          "code": "GOOGL",
+          "name": "谷歌",
+          "reason": "搜索广告"
+        },
+        {
+          "code": "BRK-B",
+          "name": "伯克希尔",
+          "reason": "巴菲特控股"
+        },
+        {
+          "code": "LLY",
+          "name": "礼来",
+          "reason": "减肥药龙头"
+        },
+        {
+          "code": "JPM",
+          "name": "摩根大通",
+          "reason": "美国最大银行"
+        },
+        {
+          "code": "XOM",
+          "name": "埃克森美孚",
+          "reason": "能源龙头"
+        }
+      ]
+    },
+    {
+      "code": "SOXX",
+      "name": "半导体ETF",
+      "theme": "芯片制造",
+      "sector": "芯片制造",
+      "market": "us",
+      "leading_stocks": [
+        "英伟达",
+        "台积电",
+        "博通",
+        "AMD",
+        "阿斯麦"
+      ],
+      "top_stocks": [
+        {
+          "code": "NVDA",
+          "name": "英伟达",
+          "reason": "GPU/AI芯片"
+        },
+        {
+          "code": "TSM",
+          "name": "台积电",
+          "reason": "全球最大晶圆代工"
+        },
+        {
+          "code": "AVGO",
+          "name": "博通",
+          "reason": "芯片+软件"
+        },
+        {
+          "code": "AMD",
+          "name": "AMD",
+          "reason": "CPU/GPU"
+        },
+        {
+          "code": "ASML",
+          "name": "阿斯麦",
+          "reason": "EUV光刻机垄断"
+        },
+        {
+          "code": "INTC",
+          "name": "英特尔",
+          "reason": "IDM巨头"
+        },
+        {
+          "code": "QCOM",
+          "name": "高通",
+          "reason": "移动芯片"
+        },
+        {
+          "code": "MU",
+          "name": "美光",
+          "reason": "存储芯片"
+        },
+        {
+          "code": "LRCX",
+          "name": "泛林集团",
+          "reason": "刻蚀设备"
+        },
+        {
+          "code": "KLAC",
+          "name": "科磊",
+          "reason": "检测设备"
+        }
+      ]
+    },
+    {
+      "code": "BOTZ",
+      "name": "机器人自动化ETF",
+      "theme": "机器人",
+      "sector": "机器人",
+      "market": "us",
+      "leading_stocks": [
+        "英伟达",
+        "直觉外科",
+        "ABB",
+        "发那科",
+        "库卡"
+      ],
+      "top_stocks": [
+        {
+          "code": "NVDA",
+          "name": "英伟达",
+          "reason": "机器人AI芯片"
+        },
+        {
+          "code": "ISRG",
+          "name": "直觉外科",
+          "reason": "手术机器人"
+        },
+        {
+          "code": "ABB",
+          "name": "ABB",
+          "reason": "工业机器人"
+        },
+        {
+          "code": "FANUY",
+          "name": "发那科",
+          "reason": "数控+机器人"
+        },
+        {
+          "code": "KUKA",
+          "name": "库卡",
+          "reason": "工业机器人"
+        },
+        {
+          "code": "TER",
+          "name": "泰瑞达",
+          "reason": "协作机器人"
+        },
+        {
+          "code": "CGNX",
+          "name": "康耐视",
+          "reason": "机器视觉"
+        },
+        {
+          "code": "ROK",
+          "name": "罗克韦尔",
+          "reason": "工业自动化"
+        },
+        {
+          "code": "SIE",
+          "name": "西门子",
+          "reason": "工业软件+自动化"
+        },
+        {
+          "code": "HON",
+          "name": "霍尼韦尔",
+          "reason": "工业自动化"
         }
       ]
     }
