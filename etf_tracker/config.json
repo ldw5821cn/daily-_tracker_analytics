@@ -1,7 +1,7 @@
 {
-  "etf_code": "516150",
-  "etf_name": "稀土ETF嘉实",
-  "tracking_industries": ["机器人", "人工智能", "AI", "芯片制造", "存储行业", "内存制造"],
+  "default_etf": "516150",
+  "report_title": "多板块 ETF 智能投资分析报告",
+  "tracking_industries": ["银行", "消费", "CPU", "人工智能", "AI", "晶圆制造", "高股息", "稀土永磁", "半导体", "新能源"],
   "backtest_periods": [30, 60, 90],
   "data_source": "akshare",
   "data_sources": [
@@ -63,95 +63,173 @@
   ],
   "wechat_push": {
     "enabled": true,
-    "channel": "hermes"
+    "channel": "hermes",
+    "max_length": 1200
   },
   "features": {
     "minute_data": true,
     "fund_flow": true,
     "sector_comparison": true,
     "margin_trading": true,
-    "individual_stocks": true
+    "individual_stocks": true,
+    "multi_etf": true,
+    "cross_sector_comparison": true
   },
+  "etfs": [
+    {
+      "code": "516150",
+      "name": "稀土ETF嘉实",
+      "theme": "稀土永磁",
+      "sector": "稀土永磁",
+      "leading_stocks": ["北方稀土", "中国稀土", "盛和资源", "广晟有色", "厦门钨业"],
+      "top_stocks": [
+        {"code": "600111", "name": "北方稀土", "reason": "全球轻稀土龙头"},
+        {"code": "000831", "name": "中国稀土", "reason": "中重稀土整合平台"},
+        {"code": "600392", "name": "盛和资源", "reason": "稀土全产业链布局"},
+        {"code": "600259", "name": "广晟有色", "reason": "广东稀土资源整合"},
+        {"code": "600549", "name": "厦门钨业", "reason": "稀土+钨双主业"},
+        {"code": "600010", "name": "包钢股份", "reason": "稀土精矿资源"},
+        {"code": "600366", "name": "宁波韵升", "reason": "稀土永磁材料"},
+        {"code": "000970", "name": "中科三环", "reason": "烧结钕铁硼龙头"},
+        {"code": "600580", "name": "卧龙电驱", "reason": "稀土永磁电机"},
+        {"code": "300748", "name": "金力永磁", "reason": "高性能钕铁硼"}
+      ]
+    },
+    {
+      "code": "512800",
+      "name": "银行ETF",
+      "theme": "银行",
+      "sector": "银行",
+      "leading_stocks": ["招商银行", "工商银行", "建设银行", "农业银行", "中国银行"],
+      "top_stocks": [
+        {"code": "600036", "name": "招商银行", "reason": "零售银行龙头"},
+        {"code": "601398", "name": "工商银行", "reason": "全球资产规模最大银行"},
+        {"code": "601939", "name": "建设银行", "reason": "对公+住房金融优势"},
+        {"code": "601288", "name": "农业银行", "reason": "县域金融覆盖广"},
+        {"code": "601988", "name": "中国银行", "reason": "国际化程度最高"},
+        {"code": "601658", "name": "邮储银行", "reason": "零售存款基础好"},
+        {"code": "600016", "name": "民生银行", "reason": "民营银行代表"},
+        {"code": "601166", "name": "兴业银行", "reason": "同业业务优势"},
+        {"code": "601818", "name": "光大银行", "reason": "理财业务特色"},
+        {"code": "600000", "name": "浦发银行", "reason": "对公+零售转型"}
+      ]
+    },
+    {
+      "code": "159928",
+      "name": "消费ETF",
+      "theme": "消费",
+      "sector": "消费",
+      "leading_stocks": ["贵州茅台", "五粮液", "伊利股份", "海天味业", "中国中免"],
+      "top_stocks": [
+        {"code": "600519", "name": "贵州茅台", "reason": "白酒绝对龙头"},
+        {"code": "000858", "name": "五粮液", "reason": "浓香型白酒龙头"},
+        {"code": "600887", "name": "伊利股份", "reason": "乳制品龙头"},
+        {"code": "603288", "name": "海天味业", "reason": "调味品龙头"},
+        {"code": "601888", "name": "中国中免", "reason": "免税龙头"},
+        {"code": "000333", "name": "美的集团", "reason": "家电龙头"},
+        {"code": "000651", "name": "格力电器", "reason": "空调龙头"},
+        {"code": "603369", "name": "今世缘", "reason": "区域白酒高增长"},
+        {"code": "600809", "name": "山西汾酒", "reason": "清香型白酒龙头"},
+        {"code": "002714", "name": "牧原股份", "reason": "生猪养殖龙头"}
+      ]
+    },
+    {
+      "code": "512760",
+      "name": "芯片ETF",
+      "theme": "CPU/芯片",
+      "sector": "半导体",
+      "leading_stocks": ["中芯国际", "海光信息", "寒武纪", "中微公司", "北方华创"],
+      "top_stocks": [
+        {"code": "688981", "name": "中芯国际", "reason": "晶圆代工龙头"},
+        {"code": "688041", "name": "海光信息", "reason": "国产CPU/DCU龙头"},
+        {"code": "688256", "name": "寒武纪", "reason": "AI芯片独角兽"},
+        {"code": "688012", "name": "中微公司", "reason": "刻蚀设备龙头"},
+        {"code": "002371", "name": "北方华创", "reason": "半导体设备平台"},
+        {"code": "688047", "name": "龙芯中科", "reason": "自主指令集CPU"},
+        {"code": "300474", "name": "景嘉微", "reason": "国产GPU龙头"},
+        {"code": "688072", "name": "拓荆科技", "reason": "薄膜沉积设备"},
+        {"code": "688082", "name": "盛美上海", "reason": "清洗设备龙头"},
+        {"code": "300054", "name": "鼎龙股份", "reason": "CMP抛光垫"}
+      ]
+    },
+    {
+      "code": "159819",
+      "name": "人工智能ETF",
+      "theme": "AI",
+      "sector": "人工智能",
+      "leading_stocks": ["寒武纪", "海康威视", "科大讯飞", "中际旭创", "金山办公"],
+      "top_stocks": [
+        {"code": "688256", "name": "寒武纪", "reason": "AI芯片龙头"},
+        {"code": "002415", "name": "海康威视", "reason": "安防AI龙头"},
+        {"code": "002230", "name": "科大讯飞", "reason": "语音AI龙头"},
+        {"code": "300308", "name": "中际旭创", "reason": "光模块龙头"},
+        {"code": "688111", "name": "金山办公", "reason": "办公软件AI化"},
+        {"code": "603019", "name": "中科曙光", "reason": "AI算力基础设施"},
+        {"code": "000938", "name": "中芯国际", "reason": "晶圆代工（AI芯片）"},
+        {"code": "688787", "name": "海天瑞声", "reason": "AI训练数据"},
+        {"code": "300496", "name": "中科创达", "reason": "边缘AI平台"},
+        {"code": "688327", "name": "云从科技", "reason": "计算机视觉"}
+      ]
+    },
+    {
+      "code": "512480",
+      "name": "半导体ETF",
+      "theme": "晶圆制造",
+      "sector": "半导体",
+      "leading_stocks": ["中芯国际", "北方华创", "中微公司", "韦尔股份", "兆易创新"],
+      "top_stocks": [
+        {"code": "688981", "name": "中芯国际", "reason": "晶圆代工龙头"},
+        {"code": "002371", "name": "北方华创", "reason": "半导体设备平台"},
+        {"code": "688012", "name": "中微公司", "reason": "刻蚀设备龙头"},
+        {"code": "603501", "name": "韦尔股份", "reason": "CIS芯片龙头"},
+        {"code": "603986", "name": "兆易创新", "reason": "存储芯片龙头"},
+        {"code": "688019", "name": "安集科技", "reason": "CMP抛光液"},
+        {"code": "600206", "name": "有研新材", "reason": "半导体靶材"},
+        {"code": "688072", "name": "拓荆科技", "reason": "薄膜沉积设备"},
+        {"code": "688082", "name": "盛美上海", "reason": "清洗设备龙头"},
+        {"code": "300782", "name": "卓胜微", "reason": "射频前端"}
+      ]
+    },
+    {
+      "code": "563180",
+      "name": "高股息ETF",
+      "theme": "高股息",
+      "sector": "高股息",
+      "leading_stocks": ["中国神华", "长江电力", "工商银行", "中国平安", "中国石油"],
+      "top_stocks": [
+        {"code": "601088", "name": "中国神华", "reason": "煤炭+高股息"},
+        {"code": "600900", "name": "长江电力", "reason": "水电龙头高股息"},
+        {"code": "601398", "name": "工商银行", "reason": "银行高股息"},
+        {"code": "601318", "name": "中国平安", "reason": "保险高股息"},
+        {"code": "601857", "name": "中国石油", "reason": "石油高股息"},
+        {"code": "600028", "name": "中国石化", "reason": "炼化高股息"},
+        {"code": "601225", "name": "陕西煤业", "reason": "煤炭高股息"},
+        {"code": "600660", "name": "福耀玻璃", "reason": "汽车玻璃高股息"},
+        {"code": "600177", "name": "雅戈尔", "reason": "服装+投资高股息"},
+        {"code": "000895", "name": "双汇发展", "reason": "食品高股息"}
+      ]
+    }
+  ],
   "individual_stocks": {
     "enabled": true,
     "stocks": [
-      {
-        "code": "300054",
-        "name": "鼎龙股份",
-        "sector": "半导体材料",
-        "reason": "CMP抛光垫龙头，国产替代核心标的"
-      },
-      {
-        "code": "688019",
-        "name": "安集科技",
-        "sector": "半导体材料",
-        "reason": "CMP抛光液龙头，中芯国际核心供应商"
-      },
-      {
-        "code": "600206",
-        "name": "有研新材",
-        "sector": "稀土/半导体材料",
-        "reason": "稀土磁材+靶材双轮驱动"
-      },
-      {
-        "code": "688041",
-        "name": "海光信息",
-        "sector": "CPU/GPU",
-        "reason": "国产CPU龙头，DCU加速卡放量"
-      },
-      {
-        "code": "688256",
-        "name": "寒武纪",
-        "sector": "AI芯片",
-        "reason": "AI芯片独角兽，思元系列云端训练/推理芯片"
-      },
-      {
-        "code": "688981",
-        "name": "中芯国际",
-        "sector": "晶圆代工",
-        "reason": "国内晶圆代工龙头，先进制程突破"
-      },
-      {
-        "code": "688012",
-        "name": "中微公司",
-        "sector": "半导体设备",
-        "reason": "刻蚀设备龙头，5nm工艺验证中"
-      },
-      {
-        "code": "300782",
-        "name": "卓胜微",
-        "sector": "射频芯片",
-        "reason": "射频前端龙头，5G模组国产替代"
-      },
-      {
-        "code": "688047",
-        "name": "龙芯中科",
-        "sector": "CPU",
-        "reason": "国产CPU自主指令集，龙架构生态建设"
-      },
-      {
-        "code": "300474",
-        "name": "景嘉微",
-        "sector": "GPU",
-        "reason": "国产GPU龙头，JM9系列图形芯片"
-      },
-      {
-        "code": "688072",
-        "name": "拓荆科技",
-        "sector": "半导体设备",
-        "reason": "薄膜沉积设备龙头，PECVD/SACVD/HDPCVD"
-      },
-      {
-        "code": "688082",
-        "name": "盛美上海",
-        "sector": "半导体设备",
-        "reason": "清洗设备龙头，单片/槽式清洗设备"
-      }
+      {"code": "300054", "name": "鼎龙股份", "sector": "半导体材料", "reason": "CMP抛光垫龙头，国产替代核心标的"},
+      {"code": "688019", "name": "安集科技", "sector": "半导体材料", "reason": "CMP抛光液龙头，中芯国际核心供应商"},
+      {"code": "600206", "name": "有研新材", "sector": "稀土/半导体材料", "reason": "稀土磁材+靶材双轮驱动"},
+      {"code": "688041", "name": "海光信息", "sector": "CPU/GPU", "reason": "国产CPU龙头，DCU加速卡放量"},
+      {"code": "688256", "name": "寒武纪", "sector": "AI芯片", "reason": "AI芯片独角兽，思元系列云端训练/推理芯片"},
+      {"code": "688981", "name": "中芯国际", "sector": "晶圆代工", "reason": "国内晶圆代工龙头，先进制程突破"},
+      {"code": "688012", "name": "中微公司", "sector": "半导体设备", "reason": "刻蚀设备龙头，5nm工艺验证中"},
+      {"code": "300782", "name": "卓胜微", "sector": "射频芯片", "reason": "射频前端龙头，5G模组国产替代"},
+      {"code": "688047", "name": "龙芯中科", "sector": "CPU", "reason": "国产CPU自主指令集，龙架构生态建设"},
+      {"code": "300474", "name": "景嘉微", "sector": "GPU", "reason": "国产GPU龙头，JM9系列图形芯片"},
+      {"code": "688072", "name": "拓荆科技", "sector": "半导体设备", "reason": "薄膜沉积设备龙头，PECVD/SACVD/HDPCVD"},
+      {"code": "688082", "name": "盛美上海", "sector": "半导体设备", "reason": "清洗设备龙头，单片/槽式清洗设备"}
     ]
   },
   "sector_comparison": {
     "enabled": true,
-    "sector_name": "稀土永磁",
-    "leading_stocks": ["北方稀土", "中国稀土", "盛和资源", "广晟有色", "厦门钨业"]
+    "sector_name": "多板块对比",
+    "leading_stocks": ["北方稀土", "招商银行", "贵州茅台", "中芯国际", "寒武纪"]
   }
 }

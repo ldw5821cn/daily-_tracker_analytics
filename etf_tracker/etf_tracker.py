@@ -57,15 +57,190 @@ except ImportError:
     MULTI_MODEL_AVAILABLE = False
 
 
+# 占位类，避免导入失败时引用错误
+if not MULTI_MODEL_AVAILABLE:
+    class MultiModelPredictor:
+        def train_all_models(self, *args, **kwargs):
+            return {}
+        def ensemble_predict(self, *args, **kwargs):
+            return {'ensemble': {}, 'individual_predictions': {}}
+if not PREDICTOR_AVAILABLE:
+    class TrendPredictor:
+        def predict_trend(self, *args, **kwargs):
+            return {}
+        def optimize_strategy(self, *args, **kwargs):
+            return {}
+        def add_technical_indicators(self, *args, **kwargs):
+            return args[0] if args else None
+
+
+# ============ 多 ETF 分析引擎 ============
+
+class MultiETFAnalyzer:
+    """多 ETF/板块批量分析引擎"""
+    
+    def __init__(self, config=None):
+        self.config = config or Config()
+        self.fetcher = ETFDataFetcher(config)
+        self.results = []
+    
+    def analyze_etf(self, etf_config: Dict) -> Dict:
+        """分析单个 ETF"""
+        code = etf_config['code']
+        name = etf_config['name']
+        print(f"\n{'='*60}")
+        print(f"分析 ETF: {name} ({code})")
+        print(f"{'='*60}")
+        
+        try:
+            df = self.fetcher.get_kline_data(code, days=120)
+            if df is None or len(df) < 30:
+                return {'code': code, 'name': name, 'error': '数据不足'}
+            
+            engine = BacktestEngine(df)
+            backtest_results = engine.run_all_backtests(self.config.backtest_periods)
+            
+            signal_gen = SignalGenerator(backtest_results, df)
+            signals = signal_gen.generate_signals()
+            position = signal_gen.calculate_position_sizing()
+            
+            # 多模型预测
+            multi_model = None
+            if MULTI_MODEL_AVAILABLE:
+                try:
+                    predictor = MultiModelPredictor()
+                    training_results = predictor.train_all_models(df, target_col='target_1d')
+                    ensemble_result = predictor.ensemble_predict(df, days=5)
+                    multi_model = {
+                        'ensemble': ensemble_result['ensemble'],
+                        'individual': ensemble_result['individual_predictions'],
+                        'training': training_results
+                    }
+                except Exception as e:
+                    print(f"  多模型预测失败: {e}")
+            
+            # 趋势预测
+            trend = None
+            if PREDICTOR_AVAILABLE:
+                try:
+                    predictor = TrendPredictor()
+                    trend = predictor.predict_trend(df, days=5)
+                except Exception as e:
+                    print(f"  趋势预测失败: {e}")
+            
+            return {
+                'code': code,
+                'name': name,
+                'theme': etf_config.get('theme', '-'),
+                'sector': etf_config.get('sector', '-'),
+                'current_price': df['close'].iloc[-1],
+                'backtest': backtest_results,
+                'signals': signals,
+                'position': position,
+                'multi_model': multi_model,
+                'trend': trend,
+                'df': df
+            }
+        except Exception as e:
+            print(f"  ETF {name} 分析失败: {e}")
+            return {'code': code, 'name': name, 'error': str(e)}
+    
+    def analyze_all_etfs(self) -> List[Dict]:
+        """分析所有配置的 ETF"""
+        etfs = self.config.etfs
+        if not etfs:
+            print("⚠️ 未配置 ETF，跳过多板块分析")
+            return []
+        
+        print(f"\n开始分析 {len(etfs)} 个板块 ETF...")
+        results = []
+        for etf in etfs:
+            result = self.analyze_etf(etf)
+            results.append(result)
+        self.results = results
+        return results
+    
+    def analyze_top_stocks(self, etf_config: Dict, max_stocks: int = 10) -> List[Dict]:
+        """分析某 ETF 的 top 个股"""
+        top_stocks = etf_config.get('top_stocks', [])[:max_stocks]
+        if not top_stocks:
+            return []
+        
+        print(f"\n分析 {etf_config['name']} 的 Top {len(top_stocks)} 个股...")
+        results = []
+        for stock in top_stocks:
+            try:
+                df_stock = self.fetcher.get_stock_kline_data(stock['code'], days=60)
+                if df_stock is None or len(df_stock) < 20:
+                    continue
+                
+                latest_price = float(df_stock.iloc[-1]['close'])
+                first_price = float(df_stock.iloc[0]['close'])
+                return_30d = (latest_price - first_price) / first_price * 100
+                
+                # 多模型预测
+                multi_model = None
+                if MULTI_MODEL_AVAILABLE:
+                    try:
+                        predictor = MultiModelPredictor()
+                        training_results = predictor.train_all_models(df_stock, target_col='target_1d')
+                        ensemble_result = predictor.ensemble_predict(df_stock, days=5)
+                        multi_model = ensemble_result['ensemble']
+                    except Exception as e:
+                        pass
+                
+                results.append({
+                    'code': stock['code'],
+                    'name': stock['name'],
+                    'reason': stock.get('reason', '-'),
+                    'latest_price': round(latest_price, 2),
+                    'return_30d': round(return_30d, 2),
+                    'trend': '上涨' if return_30d > 0 else '下跌',
+                    'multi_model': multi_model
+                })
+                print(f"  {stock['name']} ({stock['code']}): 30天{return_30d:+.2f}%")
+            except Exception as e:
+                print(f"  {stock['name']} 分析失败: {e}")
+        
+        return results
+    
+    def get_sector_ranking(self) -> pd.DataFrame:
+        """生成板块排名"""
+        if not self.results:
+            return pd.DataFrame()
+        
+        rows = []
+        for r in self.results:
+            if 'error' in r:
+                continue
+            backtest_60 = next((b for b in r['backtest'] if b.get('period_days') == 60), {})
+            rows.append({
+                '板块': r['name'],
+                '主题': r['theme'],
+                '最新价': r['current_price'],
+                '60天收益': backtest_60.get('total_return', 0),
+                '60天夏普': backtest_60.get('sharpe_ratio', 0),
+                '综合评分': r['signals'].get('score', 0),
+                '信号': r['signals'].get('overall', '-'),
+                '1日预测': r.get('multi_model', {}).get('ensemble', {}).get('return_1d', 0) * 100 if r.get('multi_model') else 0,
+                '预测置信度': r.get('multi_model', {}).get('ensemble', {}).get('confidence', 0) * 100 if r.get('multi_model') else 0
+            })
+        
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            df = df.sort_values('综合评分', ascending=False)
+        return df
+
+
 # ============ 配置加载 ============
 
 class Config:
     """配置管理器"""
     
     DEFAULT_CONFIG = {
-        "etf_code": "516150",
-        "etf_name": "稀土ETF嘉实",
-        "tracking_industries": ["机器人", "人工智能", "AI", "芯片制造", "存储行业", "内存制造"],
+        "default_etf": "516150",
+        "report_title": "多板块 ETF 智能投资分析报告",
+        "tracking_industries": ["银行", "消费", "CPU", "人工智能", "AI", "晶圆制造", "高股息", "稀土永磁", "半导体", "新能源"],
         "backtest_periods": [30, 60, 90],
         "data_source": "akshare",
         "wechat_push": {
@@ -77,8 +252,31 @@ class Config:
             "fund_flow": True,
             "sector_comparison": True,
             "margin_trading": True,
-            "individual_stocks": True
+            "individual_stocks": True,
+            "multi_etf": True,
+            "cross_sector_comparison": True
         },
+        "etfs": [
+            {
+                "code": "516150",
+                "name": "稀土ETF嘉实",
+                "theme": "稀土永磁",
+                "sector": "稀土永磁",
+                "leading_stocks": ["北方稀土", "中国稀土", "盛和资源", "广晟有色", "厦门钨业"],
+                "top_stocks": [
+                    {"code": "600111", "name": "北方稀土", "reason": "全球轻稀土龙头"},
+                    {"code": "000831", "name": "中国稀土", "reason": "中重稀土整合平台"},
+                    {"code": "600392", "name": "盛和资源", "reason": "稀土全产业链布局"},
+                    {"code": "600259", "name": "广晟有色", "reason": "广东稀土资源整合"},
+                    {"code": "600549", "name": "厦门钨业", "reason": "稀土+钨双主业"},
+                    {"code": "600010", "name": "包钢股份", "reason": "稀土精矿资源"},
+                    {"code": "600366", "name": "宁波韵升", "reason": "稀土永磁材料"},
+                    {"code": "000970", "name": "中科三环", "reason": "烧结钕铁硼龙头"},
+                    {"code": "600580", "name": "卧龙电驱", "reason": "稀土永磁电机"},
+                    {"code": "300748", "name": "金力永磁", "reason": "高性能钕铁硼"}
+                ]
+            }
+        ],
         "individual_stocks": {
             "enabled": True,
             "stocks": [
@@ -98,8 +296,8 @@ class Config:
         },
         "sector_comparison": {
             "enabled": True,
-            "sector_name": "稀土永磁",
-            "leading_stocks": ["北方稀土", "中国稀土", "盛和资源", "广晟有色", "厦门钨业"]
+            "sector_name": "多板块对比",
+            "leading_stocks": ["北方稀土", "招商银行", "贵州茅台", "中芯国际", "寒武纪"]
         }
     }
     
@@ -108,8 +306,11 @@ class Config:
         self.config = self._load_config()
         
         # 提取常用配置
-        self.etf_code = self.config.get("etf_code", "516150")
+        self.default_etf = self.config.get("default_etf", "516150")
+        self.etf_code = self.config.get("etf_code", self.default_etf)
         self.etf_name = self.config.get("etf_name", "稀土ETF嘉实")
+        self.etfs = self.config.get("etfs", [])
+        self.report_title = self.config.get("report_title", "多板块 ETF 智能投资分析报告")
         self.tracking_industries = self.config.get("tracking_industries", [])
         self.backtest_periods = self.config.get("backtest_periods", [30, 60, 90])
         self.data_source = self.config.get("data_source", "akshare")
