@@ -107,7 +107,7 @@ class MultiETFAnalyzer:
         print(f"{'='*60}")
         
         try:
-            df = self.fetcher.get_kline_data(code, days=120)
+            df = self.fetcher.get_kline_data(code, days=400)
             if df is None or len(df) < 30:
                 return {'code': code, 'name': name, 'error': '数据不足'}
             
@@ -184,7 +184,7 @@ class MultiETFAnalyzer:
         results = []
         for stock in top_stocks:
             try:
-                df_stock = self.fetcher.get_stock_kline_data(stock['code'], days=120)
+                df_stock = self.fetcher.get_stock_kline_data(stock['code'], days=400)
                 if df_stock is None or len(df_stock) < 40:
                     continue
                 
@@ -255,7 +255,7 @@ class Config:
         "default_etf": "516150",
         "report_title": "多板块 ETF 智能投资分析报告",
         "tracking_industries": ["银行", "消费", "CPU", "人工智能", "AI", "晶圆制造", "高股息", "稀土永磁", "半导体", "新能源"],
-        "backtest_periods": [30, 60, 90],
+        "backtest_periods": [30, 60, 90, 120, 200, 280, 365],
         "data_source": "akshare",
         "wechat_push": {
             "enabled": True,
@@ -326,7 +326,7 @@ class Config:
         self.etfs = self.config.get("etfs", [])
         self.report_title = self.config.get("report_title", "多板块 ETF 智能投资分析报告")
         self.tracking_industries = self.config.get("tracking_industries", [])
-        self.backtest_periods = self.config.get("backtest_periods", [30, 60, 90])
+        self.backtest_periods = self.config.get("backtest_periods", [30, 60, 90, 120, 200, 280, 365])
         self.data_source = self.config.get("data_source", "akshare")
         self.features = self.config.get("features", {})
         self.sector_config = self.config.get("sector_comparison", {})
@@ -734,8 +734,21 @@ class BacktestEngine:
         kdj_j = latest['j']
         kdj_status = "超买" if kdj_j > 80 else "超卖" if kdj_j < 20 else "中性"
         
+        # 周期描述
+        period_desc_map = {
+            30: "近1个月",
+            60: "近2个月",
+            90: "近3个月",
+            120: "近4个月",
+            200: "近7个月",
+            280: "近9个月",
+            365: "近1年"
+        }
+        period_desc = period_desc_map.get(days, f"近{days}天")
+        
         return {
             "period_days": days,
+            "period_desc": period_desc,
             "start_date": recent.iloc[0]['date'].strftime('%Y-%m-%d'),
             "end_date": recent.iloc[-1]['date'].strftime('%Y-%m-%d'),
             "start_price": round(start_price, 3),
@@ -760,7 +773,7 @@ class BacktestEngine:
     def run_all_backtests(self, periods: List[int] = None) -> List[Dict]:
         """运行所有周期回测"""
         results = []
-        for days in (periods or [30, 60, 90]):
+        for days in (periods or [30, 60, 90, 120, 200, 280, 365]):
             result = self.backtest_period(days)
             results.append(result)
         return results
@@ -810,7 +823,7 @@ class SignalGenerator:
         # 1. 多周期趋势一致性
         returns = [r['total_return'] for r in self.results if 'total_return' in r]
         if all(r > 0 for r in returns):
-            signals.append("多周期趋势一致向上(30/60/90天均上涨)")
+            signals.append("多周期趋势一致向上(30/60/90/120/200/280/365天均上涨)")
             score += 3
         elif all(r < 0 for r in returns):
             signals.append("多周期趋势一致向下")
@@ -1011,7 +1024,7 @@ class ReportGenerator:
 """
         
         for result in backtest_results:
-            report += f"""### {result['period_days']}天回测 ({result['start_date']} ~ {result['end_date']})
+            report += f"""### {result['period_days']}天回测 ({result['period_desc']}) {result['start_date']} ~ {result['end_date']}
 
 | 指标 | 数值 | 评价 |
 |------|------|------|
@@ -1317,7 +1330,8 @@ class ReportGenerator:
 |------|------|----------|----------|------|
 """
                 for bt in result['backtest']:
-                    report += f"| {bt['period_days']}天 | {bt['total_return']:+.2f}% | {bt['max_drawdown']:.2f}% | {bt['sharpe_ratio']:.2f} | {bt['ma_trend']} |\n"
+                    period_desc = bt.get('period_desc', f"近{bt['period_days']}天")
+                    report += f"| {bt['period_days']}天 ({period_desc}) | {bt['total_return']:+.2f}% | {bt['max_drawdown']:.2f}% | {bt['sharpe_ratio']:.2f} | {bt['ma_trend']} |\n"
                 
                 # 多模型预测
                 if result.get('multi_model'):
@@ -1425,7 +1439,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     quick_results = []
     for etf in config.etfs:
         try:
-            df = analyzer.fetcher.get_kline_data(etf['code'], days=120)
+            df = analyzer.fetcher.get_kline_data(etf['code'], days=400)
             if df is None or len(df) < 30:
                 continue
             engine = BacktestEngine(df)
@@ -1618,7 +1632,7 @@ def main():
             available = "✓" if status['available'] else "✗"
             print(f"    {available} {name:12s} 健康度: {health:5.1f}  成功: {status['success_count']}  失败: {status['error_count']}")
     
-    df = fetcher.get_kline_data(config.etf_code, days=120)
+    df = fetcher.get_kline_data(config.etf_code, days=400)
     print(f"获取成功: {len(df)} 个交易日")
     
     # 获取资金流向数据

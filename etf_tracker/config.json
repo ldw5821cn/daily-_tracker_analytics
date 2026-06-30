@@ -34,7 +34,11 @@
   "backtest_periods": [
     30,
     60,
-    90
+    90,
+    120,
+    200,
+    280,
+    365
   ],
   "data_source": "akshare",
   "data_sources": [
@@ -53,7 +57,7 @@
       "name": "eastmoney",
       "source_type": "eastmoney",
       "enabled": true,
-      "priority": 2,
+      "priority": 3,
       "timeout": 15,
       "retry_count": 3,
       "retry_delay": 2.0,
@@ -64,7 +68,7 @@
       "name": "tushare",
       "source_type": "tushare",
       "enabled": true,
-      "priority": 3,
+      "priority": 4,
       "timeout": 20,
       "retry_count": 3,
       "retry_delay": 3.0,
@@ -75,7 +79,7 @@
       "name": "baostock",
       "source_type": "baostock",
       "enabled": true,
-      "priority": 4,
+      "priority": 5,
       "timeout": 30,
       "retry_count": 3,
       "retry_delay": 2.0,
@@ -86,7 +90,7 @@
       "name": "yfinance",
       "source_type": "yfinance",
       "enabled": true,
-      "priority": 5,
+      "priority": 2,
       "timeout": 20,
       "retry_count": 3,
       "retry_delay": 2.0,
