@@ -1,6 +1,6 @@
 {
   "default_etf": "516150",
-  "report_title": "多板块 ETF 智能投资分析报告",
+  "report_title": "多板块 ETF + 美股科技/东南亚科技 每日投资分析报告",
   "tracking_industries": [
     "芯片制造",
     "新能源",
@@ -1866,6 +1866,20 @@
           "code": "HON",
           "name": "霍尼韦尔",
           "reason": "工业自动化"
+        }
+      ]
+    },
+    {
+      "code": "GRAB",
+      "name": "Grab Holdings",
+      "market": "us",
+      "category": "网约车/东南亚科技",
+      "description": "东南亚网约车与超级应用平台龙头，覆盖新加坡、印尼、马来西亚、泰国、越南等市场",
+      "top_stocks": [
+        {
+          "code": "GRAB",
+          "name": "Grab Holdings",
+          "weight": 100.0
         }
       ]
     }
