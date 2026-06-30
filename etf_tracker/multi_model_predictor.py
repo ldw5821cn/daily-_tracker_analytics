@@ -14,8 +14,9 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
-# 添加 akshare 路径
-sys.path.insert(0, '/home/zhihu/.linuxbrew/Cellar/python@3.10/3.10.9/lib/python3.10/site-packages')
+# 添加 akshare 路径 (仅在非虚拟环境时)
+if not hasattr(sys, 'real_prefix') and sys.base_prefix == sys.prefix:
+    sys.path.insert(0, '/home/zhihu/.linuxbrew/Cellar/python@3.10/3.10.9/lib/python3.10/site-packages')
 
 # 尝试导入各种模型
 try:
@@ -44,10 +45,13 @@ except ImportError:
     print("  ⚠️ Scikit-learn 未安装")
 
 try:
-    from tensorflow.keras.models import Sequential
+    import tensorflow as tf
+    from tensorflow.keras.models import Sequential, Model
     from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
+    from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Reshape, Multiply, Lambda, Input
     from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
     from tensorflow.keras.optimizers import Adam
+    import tensorflow.keras.backend as K
     KERAS_AVAILABLE = True
 except ImportError:
     KERAS_AVAILABLE = False
@@ -398,11 +402,11 @@ class MultiModelPredictor:
     def train_lstm(self, X_train: np.ndarray, y_train: np.ndarray,
                   X_test: np.ndarray, y_test: np.ndarray,
                   feature_names: List[str]) -> Dict:
-        """训练 LSTM 深度学习模型"""
+        """训练增强版 LSTM 深度学习模型 (CNN+BiLSTM+Attention+多时间窗口融合)"""
         if not KERAS_AVAILABLE:
             return {'error': 'TensorFlow/Keras not available'}
         
-        print("  训练 LSTM 模型...")
+        print("  训练 LSTM 模型 (CNN+BiLSTM+Attention)...")
         
         # 数据标准化
         scaler_X = StandardScaler()
@@ -416,9 +420,10 @@ class MultiModelPredictor:
         self.scalers['lstm_X'] = scaler_X
         self.scalers['lstm_y'] = scaler_y
         
-        # 重塑为 LSTM 输入格式 (samples, timesteps, features)
-        # 使用最近10天作为序列输入
-        timesteps = 10
+        # 多时间窗口融合
+        timesteps_list = [5, 10, 20]
+        models = {}
+        histories = {}
         
         def create_sequences(X, y, timesteps):
             X_seq, y_seq = [], []
@@ -427,59 +432,209 @@ class MultiModelPredictor:
                 y_seq.append(y[i+timesteps])
             return np.array(X_seq), np.array(y_seq)
         
-        X_train_seq, y_train_seq = create_sequences(X_train_scaled, y_train_scaled, timesteps)
-        X_test_seq, y_test_seq = create_sequences(X_test_scaled, y_test_scaled, timesteps)
+        # 对每个时间窗口训练一个子模型
+        for ts in timesteps_list:
+            if len(X_train_scaled) <= ts + 10:
+                continue
+            
+            X_train_seq, y_train_seq = create_sequences(X_train_scaled, y_train_scaled, ts)
+            X_test_seq, y_test_seq = create_sequences(X_test_scaled, y_test_scaled, ts)
+            
+            if len(X_train_seq) < 30 or len(X_test_seq) < 3:
+                continue
+            
+            # 构建 CNN + BiLSTM + Attention 模型
+            model = self._build_cnn_bilstm_attention_model(ts, X_train.shape[1])
+            
+            early_stop = EarlyStopping(
+                monitor='val_loss', patience=15, restore_best_weights=True, verbose=0
+            )
+            lr_reduce = ReduceLROnPlateau(
+                monitor='val_loss', factor=0.5, patience=8, min_lr=1e-7, verbose=0
+            )
+            
+            history = model.fit(
+                X_train_seq, y_train_seq,
+                validation_split=0.15,
+                epochs=150,
+                batch_size=16,
+                callbacks=[early_stop, lr_reduce],
+                verbose=0
+            )
+            
+            models[f'lstm_ts{ts}'] = {
+                'model': model,
+                'timesteps': ts,
+                'scaler_X': scaler_X,
+                'scaler_y': scaler_y
+            }
+            histories[f'lstm_ts{ts}'] = history
         
-        # 构建 LSTM 模型
-        model = Sequential([
-            LSTM(128, return_sequences=True, input_shape=(timesteps, X_train.shape[1])),
-            Dropout(0.2),
-            LSTM(64, return_sequences=True),
-            Dropout(0.2),
-            LSTM(32, return_sequences=False),
-            Dropout(0.2),
-            Dense(16, activation='relu'),
-            Dense(1)
-        ])
+        if not models:
+            return {'error': 'Not enough data for LSTM training'}
         
-        model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
+        self.models['lstm'] = models
         
-        # 早停和学习率衰减
-        early_stop = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
-        lr_reduce = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-6)
+        # 评估：使用主时间窗口(10)的测试集
+        main_ts = 10 if 'lstm_ts10' in models else list(models.keys())[0].replace('lstm_ts', '')
+        main_ts = int(main_ts)
+        X_test_seq_main, y_test_seq_main = create_sequences(X_test_scaled, y_test_scaled, main_ts)
+        X_train_seq_main, y_train_seq_main = create_sequences(X_train_scaled, y_train_scaled, main_ts)
         
-        # 训练
-        history = model.fit(
-            X_train_seq, y_train_seq,
-            validation_split=0.2,
-            epochs=200,
-            batch_size=32,
-            callbacks=[early_stop, lr_reduce],
-            verbose=0
-        )
+        # 多窗口集成预测 - 对整个序列进行预测
+        y_pred_test = self._lstm_predict_sequence(models, X_test_seq_main, scaler_y)
+        y_pred_train = self._lstm_predict_sequence(models, X_train_seq_main, scaler_y)
         
-        self.models['lstm'] = model
-        
-        # 预测
-        y_pred_train = model.predict(X_train_seq, verbose=0).flatten()
-        y_pred_test = model.predict(X_test_seq, verbose=0).flatten()
-        
-        # 反标准化
-        y_pred_train = scaler_y.inverse_transform(y_pred_train.reshape(-1, 1)).flatten()
-        y_pred_test = scaler_y.inverse_transform(y_pred_test.reshape(-1, 1)).flatten()
-        
-        # 注意：y_train_seq 和 y_test_seq 是缩放后的，需要反标准化
-        y_train_actual = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).flatten()
-        y_test_actual = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).flatten()
+        # 反标准化实际值
+        y_test_actual = scaler_y.inverse_transform(y_test_seq_main.reshape(-1, 1)).flatten()
+        y_train_actual = scaler_y.inverse_transform(y_train_seq_main.reshape(-1, 1)).flatten()
         
         return {
-            'model': 'LSTM',
+            'model': 'LSTM (CNN+BiLSTM+Attention)',
             'train_rmse': np.sqrt(mean_squared_error(y_train_actual, y_pred_train)),
             'test_rmse': np.sqrt(mean_squared_error(y_test_actual, y_pred_test)),
             'test_mae': mean_absolute_error(y_test_actual, y_pred_test),
             'test_r2': r2_score(y_test_actual, y_pred_test),
-            'epochs_trained': len(history.history['loss'])
+            'epochs_trained': max([len(h.history['loss']) for h in histories.values()]) if histories else 0,
+            'windows': list(models.keys())
         }
+    
+    def _lstm_predict_sequence(self, models: Dict, X_seq: np.ndarray, scaler_y) -> np.ndarray:
+        """对完整序列进行多窗口 LSTM 集成预测"""
+        all_predictions = []
+        weights = []
+        
+        for key, model_info in models.items():
+            ts = model_info['timesteps']
+            model = model_info['model']
+            
+            # 如果序列长度不匹配，跳过
+            if X_seq.shape[1] != ts:
+                continue
+            
+            pred_scaled = model.predict(X_seq, verbose=0).flatten()
+            pred = scaler_y.inverse_transform(pred_scaled.reshape(-1, 1)).flatten()
+            all_predictions.append(pred)
+            weights.append(np.sqrt(ts))
+        
+        if not all_predictions:
+            return np.zeros(len(X_seq))
+        
+        weights = np.array(weights)
+        weights = weights / weights.sum()
+        
+        # 加权平均
+        ensemble = np.zeros(len(X_seq))
+        for pred, w in zip(all_predictions, weights):
+            ensemble += pred * w
+        
+        return ensemble
+    
+    def _build_cnn_bilstm_attention_model(self, timesteps: int, n_features: int):
+        """构建 CNN + BiLSTM + Attention 模型"""
+        inputs = Input(shape=(timesteps, n_features))
+        
+        # CNN 特征提取
+        x = Conv1D(filters=64, kernel_size=3, padding='same', activation='relu')(inputs)
+        x = MaxPooling1D(pool_size=2, padding='same')(x)
+        x = Conv1D(filters=32, kernel_size=3, padding='same', activation='relu')(x)
+        
+        # BiLSTM 层
+        x = Bidirectional(LSTM(64, return_sequences=True))(x)
+        x = Dropout(0.25)(x)
+        x = Bidirectional(LSTM(32, return_sequences=True))(x)
+        x = Dropout(0.25)(x)
+        
+        # Attention 机制
+        attention = Dense(1, activation='tanh')(x)
+        attention = Flatten()(attention)
+        attention = tf.keras.layers.Activation('softmax')(attention)
+        attention = Reshape((-1, 1))(attention)
+        
+        # 加权求和
+        weighted = Multiply()([x, attention])
+        context = Lambda(lambda x: K.sum(x, axis=1))(weighted)
+        
+        # 输出层
+        x = Dense(32, activation='relu')(context)
+        x = Dropout(0.2)(x)
+        x = Dense(16, activation='relu')(x)
+        outputs = Dense(1)(x)
+        
+        model = Model(inputs=inputs, outputs=outputs)
+        model.compile(optimizer=Adam(learning_rate=0.001), loss='mse', metrics=['mae'])
+        
+        return model
+    
+    def _lstm_multi_window_predict(self, models: Dict, X_scaled: np.ndarray, 
+                                   reference_ts: int) -> np.ndarray:
+        """多时间窗口 LSTM 集成预测"""
+        predictions = []
+        weights = []
+        
+        for key, model_info in models.items():
+            ts = model_info['timesteps']
+            model = model_info['model']
+            
+            if len(X_scaled) <= ts:
+                continue
+            
+            # 取最后 reference_ts 行，但只使用最后 ts 行作为序列输入
+            X_seq = np.array([X_scaled[-ts:]])
+            pred = model.predict(X_seq, verbose=0).flatten()[0]
+            predictions.append(pred)
+            # 时间窗口越长，权重越高
+            weights.append(np.sqrt(ts))
+        
+        if not predictions:
+            return np.array([0.0])
+        
+        weights = np.array(weights)
+        weights = weights / weights.sum()
+        predictions = np.array(predictions)
+        
+        return np.array([np.sum(predictions * weights)])
+    
+    def predict_lstm(self, df_features: pd.DataFrame) -> float:
+        """使用训练好的 LSTM 模型预测最新一日收益"""
+        if 'lstm' not in self.models:
+            return 0.0
+        
+        models = self.models['lstm']
+        scaler_X = list(models.values())[0]['scaler_X']
+        scaler_y = list(models.values())[0]['scaler_y']
+        
+        exclude_cols = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount',
+                       'target_1d', 'target_3d', 'target_5d', 'returns', 'log_returns']
+        feature_cols = [col for col in df_features.columns if col not in exclude_cols]
+        
+        X_latest = df_features[feature_cols].values
+        X_scaled = scaler_X.transform(X_latest)
+        
+        predictions = []
+        weights = []
+        
+        for key, model_info in models.items():
+            ts = model_info['timesteps']
+            model = model_info['model']
+            
+            if len(X_scaled) < ts:
+                continue
+            
+            X_seq = np.array([X_scaled[-ts:]])
+            pred_scaled = model.predict(X_seq, verbose=0).flatten()[0]
+            pred = scaler_y.inverse_transform([[pred_scaled]])[0][0]
+            predictions.append(pred)
+            weights.append(np.sqrt(ts))
+        
+        if not predictions:
+            return 0.0
+        
+        weights = np.array(weights)
+        weights = weights / weights.sum()
+        predictions = np.array(predictions)
+        
+        return float(np.sum(predictions * weights))
     
     def train_arima(self, df: pd.DataFrame) -> Dict:
         """训练 ARIMA 模型"""
@@ -612,6 +767,9 @@ class MultiModelPredictor:
             print("\n7. Prophet")
             results['prophet'] = self.train_prophet(df)
         
+        # 在train_all_models中保存训练结果
+        self.training_results = results
+        
         print("\n=== 多模型训练完成 ===")
         return results
     
@@ -664,7 +822,16 @@ class MultiModelPredictor:
                 'price_1d': df['close'].iloc[-1] * (1 + pred)
             }
         
-        # 4. ARIMA 预测
+        # 4. LSTM 预测
+        if 'lstm' in self.models:
+            print("  LSTM 预测...")
+            pred = self.predict_lstm(df_features)
+            predictions['lstm'] = {
+                'return_1d': pred,
+                'price_1d': df['close'].iloc[-1] * (1 + pred)
+            }
+        
+        # 5. ARIMA 预测
         if 'arima' in self.models:
             print("  ARIMA 预测...")
             forecast = self.models['arima'].forecast(steps=days)
@@ -692,7 +859,8 @@ class MultiModelPredictor:
             }
         
         # 加权融合 - 根据历史表现动态调整权重
-        weights = self._calculate_weights()
+        training_results = getattr(self, 'training_results', None)
+        weights = self._calculate_weights(training_results)
         
         ensemble_return = 0
         total_weight = 0
@@ -706,6 +874,12 @@ class MultiModelPredictor:
         if total_weight > 0:
             ensemble_return /= total_weight
         
+        # 重新归一化权重（只针对实际参与预测的模型）
+        active_weights = {k: v for k, v in weights.items() if k in predictions}
+        if active_weights:
+            total = sum(active_weights.values())
+            active_weights = {k: v / total for k, v in active_weights.items()}
+        
         current_price = df['close'].iloc[-1]
         
         return {
@@ -713,25 +887,46 @@ class MultiModelPredictor:
             'ensemble': {
                 'return_1d': ensemble_return,
                 'price_1d': current_price * (1 + ensemble_return),
-                'confidence': self._calculate_confidence(predictions, weights),
-                'weights_used': weights
+                'confidence': self._calculate_confidence(predictions, active_weights),
+                'weights_used': active_weights
             }
         }
     
-    def _calculate_weights(self) -> Dict:
+    def _calculate_weights(self, training_results=None) -> Dict:
         """
         根据模型历史表现计算动态权重
         表现越好，权重越高
         """
         # 默认权重
         default_weights = {
-            'lightgbm': 0.25,
+            'lightgbm': 0.20,
             'xgboost': 0.20,
             'random_forest': 0.15,
-            'lstm': 0.15,
+            'lstm': 0.20,
             'arima': 0.10,
             'prophet': 0.15
         }
+        
+        # 优先使用训练结果(test_rmse)计算权重
+        if training_results:
+            weights = {}
+            total_inv_rmse = 0
+            
+            for model_name, result in training_results.items():
+                if 'error' in result:
+                    continue
+                if 'test_rmse' in result:
+                    inv_rmse = 1 / (result['test_rmse'] + 1e-8)
+                    weights[model_name] = inv_rmse
+                    total_inv_rmse += inv_rmse
+            
+            if total_inv_rmse > 0:
+                weights = {k: v / total_inv_rmse for k, v in weights.items()}
+                # 平滑处理：避免某个模型权重过高
+                weights = {k: 0.1 + 0.9 * v for k, v in weights.items()}
+                total = sum(weights.values())
+                weights = {k: v / total for k, v in weights.items()}
+                return weights
         
         # 如果有交叉验证结果，根据RMSE调整权重
         if hasattr(self, 'cv_results') and self.cv_results:

@@ -1128,12 +1128,25 @@ def main():
     if MULTI_MODEL_AVAILABLE:
         print("\n正在运行多模型交叉验证预测...")
         try:
-            # 获取更多数据用于多模型训练
-            import akshare as ak
-            df_long = ak.fund_etf_hist_em(symbol=config.etf_code, period='daily', 
-                                          start_date='20240101', adjust='qfq')
-            df_long.columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'amount', 
-                              'amplitude', 'pct_change', 'change', 'turnover']
+            # 尝试获取更多历史数据，如果失败则复用已有数据
+            df_long = None
+            try:
+                import akshare as ak
+                df_long = ak.fund_etf_hist_em(symbol=config.etf_code, period='daily', 
+                                              start_date='20240101', adjust='qfq')
+                df_long.columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'amount', 
+                                  'amplitude', 'pct_change', 'change', 'turnover']
+            except Exception as e:
+                print(f"  获取长期数据失败，复用当前数据: {e}")
+            
+            # 复用已有数据或加载本地历史数据
+            if df_long is None or len(df_long) < 60:
+                if os.path.exists(f"/home/zhihu/etf_tracker/{config.etf_code}_history.csv"):
+                    df_long = pd.read_csv(f"/home/zhihu/etf_tracker/{config.etf_code}_history.csv")
+                    print(f"  从本地加载历史数据: {len(df_long)} 条")
+                else:
+                    df_long = df.copy()
+                    print(f"  复用当前数据: {len(df_long)} 条")
             
             predictor = MultiModelPredictor()
             training_results = predictor.train_all_models(df_long, target_col='target_1d')
@@ -1174,9 +1187,10 @@ def main():
             try:
                 df_stock = fetcher.get_stock_kline_data(stock['code'], days=60)
                 if len(df_stock) > 0:
-                    # 导入必要的模块
+                    # 确保有必要的技术指标列
                     from advanced_predictor import TrendPredictor
                     tp = TrendPredictor()
+                    df_stock = tp.add_technical_indicators(df_stock)
                     stock_pred = tp.predict_trend(df_stock, days=5)
                     pred_chart = f"/home/zhihu/etf_tracker/reports/prediction_{stock['code']}_{report_date}.png"
                     visualizer.generate_prediction_chart(df_stock, stock_pred, stock['code'], stock['name'], pred_chart)

@@ -22,7 +22,9 @@ from typing import Dict, List, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
-sys.path.insert(0, '/home/zhihu/.linuxbrew/Cellar/python@3.10/3.10.9/lib/python3.10/site-packages')
+# 添加 akshare 路径 (仅在非虚拟环境时)
+if not hasattr(sys, 'real_prefix') and sys.base_prefix == sys.prefix:
+    sys.path.insert(0, '/home/zhihu/.linuxbrew/Cellar/python@3.10/3.10.9/lib/python3.10/site-packages')
 
 try:
     import akshare as ak
@@ -35,8 +37,38 @@ class TrendPredictor:
     """趋势预测器 - 增强版"""
     
     @staticmethod
+    def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
+        """添加技术指标（如果缺失）"""
+        df = df.copy()
+        
+        # 计算 RSI14
+        if 'rsi14' not in df.columns:
+            delta = df['close'].diff()
+            gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            df['rsi14'] = 100 - (100 / (1 + rs))
+        
+        # 计算 MA
+        for ma in [5, 10, 20, 60]:
+            if f'ma{ma}' not in df.columns:
+                df[f'ma{ma}'] = df['close'].rolling(window=ma).mean()
+        
+        # 计算 MACD
+        if 'macd' not in df.columns or 'macd_hist' not in df.columns:
+            ema_fast = df['close'].ewm(span=12, adjust=False).mean()
+            ema_slow = df['close'].ewm(span=26, adjust=False).mean()
+            df['macd'] = ema_fast - ema_slow
+            df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+            df['macd_hist'] = df['macd'] - df['macd_signal']
+        
+        return df
+    
+    @staticmethod
     def predict_trend(df: pd.DataFrame, days: int = 5) -> Dict:
         """预测未来趋势"""
+        df = TrendPredictor.add_technical_indicators(df)
+        
         if len(df) < 20:
             return {"error": "数据不足"}
         
