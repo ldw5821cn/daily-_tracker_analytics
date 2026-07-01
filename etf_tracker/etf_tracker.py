@@ -1346,7 +1346,8 @@ class ReportGenerator:
                                    report_date: str = None,
                                    international_summary: str = "",
                                    international_analysis: str = "",
-                                   alerts: List = None) -> str:
+                                   alerts: List = None,
+                                   research_summary: str = "") -> str:
         """生成多板块 ETF 综合投资报告"""
         date = report_date or datetime.now().strftime('%Y-%m-%d')
         
@@ -1459,12 +1460,22 @@ class ReportGenerator:
         if alerts:
             report += self._generate_alerts_section(alerts)
         
+        # 机构研报观点
+        if research_summary:
+            report += """
+---
+
+## 四、机构研报观点
+
+"""
+            report += research_summary
+        
         # 国际市场板块
         if international_summary or international_analysis:
             report += """
 ---
 
-## 四、国际市场环境
+## 五、国际市场环境
 
 """
             if international_summary:
@@ -1483,6 +1494,7 @@ class ReportGenerator:
 3. 预测置信度低时建议观望
 4. 国际地缘政治、政策变化可能影响板块走势
 5. 港股 ETF 受汇率和海外市场影响较大
+6. 机构研报观点仅供参考，可能存在滞后性或利益冲突
 
 ---
 
@@ -1665,6 +1677,18 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         except Exception as e:
             print(f"  国际市场数据获取失败: {e}")
     
+    # 加载研报观点
+    research_summary = ""
+    try:
+        from report_scanner import scan_reports, generate_research_summary
+        aggregator = scan_reports()
+        # 只提取重点板块相关研报的汇总
+        research_summary = generate_research_summary(aggregator)
+        if research_summary:
+            print(f"  已加载 {len(aggregator.reports)} 份研报观点")
+    except Exception as e:
+        print(f"  研报加载失败: {e}")
+    
     # 构建报告
     report_gen = ReportGenerator(config)
     report = report_gen.generate_multi_etf_report(
@@ -1674,7 +1698,8 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         report_date=report_date,
         international_summary=international_summary,
         international_analysis=international_analysis,
-        alerts=alerts
+        alerts=alerts,
+        research_summary=research_summary
     )
     _log_timing("5.报告生成", time.time() - t4)
     
@@ -1691,7 +1716,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         try:
             from hermes_wechat_pusher import HermesWeChatPusher
             pusher = HermesWeChatPusher()
-            summary = _generate_wechat_summary(quick_results, sector_ranking, top_etfs_detail)
+            summary = _generate_wechat_summary(quick_results, sector_ranking, top_etfs_detail, research_summary=research_summary)
             pusher.send_text_message(summary)
             print("微信推送已发送")
         except Exception as e:
@@ -1711,7 +1736,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
 
 
 def _generate_wechat_summary(quick_results: List[Dict], sector_ranking: pd.DataFrame,
-                              top_etfs_detail: List[Dict]) -> str:
+                              top_etfs_detail: List[Dict], research_summary: str = "") -> str:
     """生成微信推送摘要（控制在 1200 字以内）"""
     date = datetime.now().strftime('%Y-%m-%d')
     
@@ -1744,9 +1769,19 @@ def _generate_wechat_summary(quick_results: List[Dict], sector_ranking: pd.DataF
     
     summary += "\n⚠️ 风险提示: 本报告仅供参考，不构成投资建议。"
     
+    # 加入研报要点
+    if research_summary and len(research_summary) > 50:
+        summary += "\n\n📄 机构观点:\n"
+        # 简单提取第一行机构观点
+        lines = [l.strip() for l in research_summary.split('\n') if l.strip()]
+        for line in lines:
+            if '研报数量' in line or '多数评级' in line or '平均目标价' in line:
+                summary += line + '\n'
+                break
+    
     # 控制长度
     if len(summary) > 1200:
-        summary = summary[:1150] + "...\n\n详细报告见文件。"
+        summary = summary[:1150] + "\n... (摘要已截断)"
     
     return summary
 

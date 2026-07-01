@@ -80,6 +80,8 @@ class PDFReportParser:
         # 尝试使用 PyPDF2
         try:
             text = self._parse_with_pypdf2(file_path)
+            if not text or len(text) < 50:
+                text = self._parse_with_pymupdf(file_path)
         except Exception:
             # 回退到 pymupdf
             try:
@@ -145,39 +147,44 @@ class PDFReportParser:
                 report.institution = match.group(1)
                 break
         
-        # 提取评级
+        # 提取评级（中英文兼容，放宽匹配）
         rating_patterns = {
-            '买入': r'评级[：:]\s*买入|维持["买入"]|给予["买入"]',
-            '增持': r'评级[：:]\s*增持|维持["增持"]|给予["增持"]',
-            '中性': r'评级[：:]\s*中性|维持["中性"]|给予["中性"]',
-            '减持': r'评级[：:]\s*减持|维持["减持"]|给予["减持"]'
+            '买入': r'(买入|BUY|Buy)',
+            '增持': r'(增持|Overweight|OVERWEIGHT)',
+            '中性': r'(中性|Neutral|NEUTRAL|HOLD|Hold)',
+            '减持': r'(减持|Underweight|UNDERWEIGHT|Sell|SELL)'
         }
         for rating, pattern in rating_patterns.items():
             if re.search(pattern, text):
                 report.rating = rating
                 break
         
-        # 提取目标价
+        # 提取目标价（中英文兼容，支持 RMB/Yuan/元）
         price_patterns = [
-            r'目标价[：:]\s*(\d+\.?\d*)',
-            r'目标价格[：:]\s*(\d+\.?\d*)',
+            r'目标价[：:\s]*(\d+\.?\d*)',
+            r'目标价格[：:\s]*(\d+\.?\d*)',
             r'目标价\s*(\d+\.?\d*)\s*元',
-            r'目标价.*?([\d\.]+)\s*元'
+            r'目标价.*?([\d\.]+)\s*元',
+            r'Target Price[：:\s]*([\d\.]+)',
+            r'Target[：:\s]*([\d\.]+)',
+            r'Target Price:\s*([\d\.]+)\s*(RMB|Yuan|元)?'
         ]
         for pattern in price_patterns:
-            match = re.search(pattern, text)
+            match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 report.target_price = float(match.group(1))
                 break
         
-        # 提取当前价
+        # 提取当前价（中英文兼容）
         current_patterns = [
-            r'当前价[：:]\s*(\d+\.?\d*)',
-            r'现价[：:]\s*(\d+\.?\d*)',
-            r'收盘价[：:]\s*(\d+\.?\d*)'
+            r'当前价[：:\s]*(\d+\.?\d*)',
+            r'现价[：:\s]*(\d+\.?\d*)',
+            r'收盘价[：:\s]*(\d+\.?\d*)',
+            r'Current Price[：:\s]*([\d\.]+)',
+            r'Price[：:\s]*([\d\.]+)'
         ]
         for pattern in current_patterns:
-            match = re.search(pattern, text)
+            match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 report.current_price = float(match.group(1))
                 break
@@ -205,14 +212,17 @@ class PDFReportParser:
         return report
     
     def _extract_summary(self, text: str) -> str:
-        """提取摘要"""
+        """提取摘要（中英文兼容）"""
         summary_patterns = [
             r'投资要点\s*[:：]?\s*(.*?)(?=\n\s*\n|核心观点|盈利预测)',
             r'核心观点\s*[:：]?\s*(.*?)(?=\n\s*\n|投资要点|盈利预测)',
-            r'投资评级[:：]\s*\S+\s*(.*?)(?=\n\s*\n|风险提示)'
+            r'投资评级[:：]\s*\S+\s*(.*?)(?=\n\s*\n|风险提示)',
+            r'Investment Highlights\s*[:：]?\s*(.*?)(?=\n\s*\n|Core Views|Risks)',
+            r'Core Views\s*[:：]?\s*(.*?)(?=\n\s*\n|Investment Highlights|Risks)',
+            r'Executive Summary\s*[:：]?\s*(.*?)(?=\n\s*\n|Risks)'
         ]
         for pattern in summary_patterns:
-            match = re.search(pattern, text, re.DOTALL)
+            match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
             if match:
                 summary = match.group(1).strip()
                 # 清理多余空白
@@ -222,12 +232,12 @@ class PDFReportParser:
         return ""
     
     def _extract_key_points(self, text: str) -> List[str]:
-        """提取关键要点"""
+        """提取关键要点（中英文兼容）"""
         points = []
-        # 查找 "投资要点" 后的列表项
-        match = re.search(r'投资要点\s*[:：]?\s*(.*?)(?=风险提示|盈利预测|投资评级)', text, re.DOTALL)
+        # 查找 "投资要点" 或 "Investment Highlights" 后的列表项
+        match = re.search(r'(投资要点|Investment Highlights)\s*[:：]?\s*(.*?)(?=风险提示|盈利预测|投资评级|Risks|Core Views)', text, re.DOTALL | re.IGNORECASE)
         if match:
-            section = match.group(1)
+            section = match.group(2)
             # 提取以数字、项目符号开头的段落
             items = re.findall(r'[\u25cf\u2022\u25cb\u2605]?\s*([\d一二三四五六七八九十]+[\.、])?\s*([^\n]{10,200})', section)
             for _, item in items[:5]:
@@ -237,7 +247,7 @@ class PDFReportParser:
         
         # 如果没有提取到，尝试提取前几个关键句子
         if not points:
-            sentences = re.split(r'(?<=[。！？])\s+', text[:3000])
+            sentences = re.split(r'(?<=[。！？\.\!\?])\s+', text[:3000])
             for sent in sentences[:5]:
                 if len(sent) > 20:
                     points.append(sent.strip())
@@ -245,11 +255,11 @@ class PDFReportParser:
         return points[:5]
     
     def _extract_risks(self, text: str) -> List[str]:
-        """提取风险提示"""
+        """提取风险提示（中英文兼容）"""
         risks = []
-        match = re.search(r'风险提示\s*[:：]?\s*(.*?)(?=\n\s*\n|免责声明|投资评级)', text, re.DOTALL)
+        match = re.search(r'(风险提示|Risks|Risk Factors)\s*[:：]?\s*(.*?)(?=\n\s*\n|免责声明|投资评级|Disclaimer)', text, re.DOTALL | re.IGNORECASE)
         if match:
-            section = match.group(1)
+            section = match.group(2)
             items = re.findall(r'[\u25cf\u2022\u25cb]?\s*([^\n]{10,200})', section)
             for item in items[:5]:
                 clean = re.sub(r'\s+', ' ', item).strip()
@@ -352,7 +362,7 @@ class ReportAggregator:
         
         md = f"\n## 机构观点：{name or code}\n\n"
         md += f"**研报数量**: {view['report_count']} 篇 | "
-        md += f"**多数评级**: {view['majority_rating']} | "
+        md += f"**多数评级**: {view['majority_rating'] or '-'} | "
         md += f"**看多比例**: {view['bullish_ratio']*100:.0f}% | "
         md += f"**平均目标价**: {view['avg_target_price']:.2f} 元 | "
         md += f"**平均上行空间**: {view['avg_upside']:+.2f}%\n\n"
