@@ -184,16 +184,21 @@ class MultiETFAnalyzer:
         self.results = results
         return results
     
-    def analyze_top_stocks(self, etf_config: Dict, max_stocks: int = 10) -> List[Dict]:
-        """分析某 ETF 的 top 个股"""
+    def analyze_top_stocks(self, etf_config: Dict, max_stocks: int = 10, 
+                            enable_multi_model: bool = False, 
+                            timeout_per_stock: float = 60.0) -> List[Dict]:
+        """分析某 ETF 的 top 个股（默认只做快速技术指标分析，避免完整多模型训练超时）"""
         top_stocks = etf_config.get('top_stocks', [])[:max_stocks]
         if not top_stocks:
             return []
         
         print(f"\n分析 {etf_config['name']} 的 Top {len(top_stocks)} 个股...")
         results = []
+        
         for stock in top_stocks:
             try:
+                import time
+                t0 = time.time()
                 df_stock = self.fetcher.get_stock_kline_data(stock['code'], days=400)
                 if df_stock is None or len(df_stock) < 40:
                     continue
@@ -202,17 +207,28 @@ class MultiETFAnalyzer:
                 first_price_30 = float(df_stock.iloc[-30]['close']) if len(df_stock) >= 30 else float(df_stock.iloc[0]['close'])
                 return_30d = (latest_price - first_price_30) / first_price_30 * 100
                 
-                # 多模型预测
+                # 快速技术指标分析
+                engine = BacktestEngine(df_stock)
+                backtest = engine.run_all_backtests([30, 60, 90])
+                signal_gen = SignalGenerator(backtest, df_stock)
+                signals = signal_gen.generate_signals()
+                position = signal_gen.calculate_position_sizing()
+                
+                # 多模型预测：仅在显式开启时进行，且只尝试轻量模型/缓存
                 multi_model = None
-                if MULTI_MODEL_AVAILABLE:
+                if enable_multi_model and MULTI_MODEL_AVAILABLE:
                     try:
-                        predictor = MultiModelPredictor()
-                        training_results = predictor.train_all_models(df_stock, target_col='target_1d')
-                        ensemble_result = predictor.ensemble_predict(df_stock, days=5)
+                        predictor = MultiModelPredictor(stock['code'])
+                        # 只训练轻量模型（LightGBM/XGBoost/RF）+ ARIMA，不训练 LSTM
+                        training_results = predictor.train_all_models(
+                            df_stock, target_col='target_1d', skip_lstm=True
+                        )
+                        ensemble_result = predictor.ensemble_predict(df_stock, days=1)
                         multi_model = ensemble_result['ensemble']
                     except Exception as e:
                         pass
                 
+                elapsed = time.time() - t0
                 results.append({
                     'code': stock['code'],
                     'name': stock['name'],
@@ -220,9 +236,18 @@ class MultiETFAnalyzer:
                     'latest_price': round(latest_price, 2),
                     'return_30d': round(return_30d, 2),
                     'trend': '上涨' if return_30d > 0 else '下跌',
+                    'score': signals.get('score', 0),
+                    'signal': signals.get('overall_signal', 'neutral'),
+                    'position_size': position.get('position_size', 0) if isinstance(position, dict) else 0,
                     'multi_model': multi_model
                 })
-                print(f"  {stock['name']} ({stock['code']}): 30天{return_30d:+.2f}%")
+                print(f"  {stock['name']} ({stock['code']}): 30天{return_30d:+.2f}% 评分{signals.get('score', 0):.1f} ({elapsed:.1f}s)")
+                
+                # 超时保护：如果已耗时超过单只超时限制，停止后续个股
+                if elapsed > timeout_per_stock:
+                    print(f"  ⚠️ 单只个股分析耗时过长 ({elapsed:.1f}s)，跳过剩余成分股")
+                    break
+                    
             except Exception as e:
                 print(f"  {stock['name']} 分析失败: {e}")
         
@@ -1543,7 +1568,8 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         for r in top_etfs_detail:
             try:
                 etf_config = r['etf_config']
-                stocks = analyzer.analyze_top_stocks(etf_config, max_stocks=10)
+                # 默认只做快速扫描，避免完整多模型训练导致超时
+                stocks = analyzer.analyze_top_stocks(etf_config, max_stocks=10, enable_multi_model=False)
                 if stocks:
                     top_stocks_by_sector[r['sector']] = stocks
                     print(f"  {r['name']}: 分析了 {len(stocks)} 只成分股")
