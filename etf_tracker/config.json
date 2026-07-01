@@ -114,7 +114,17 @@
     "channel": "hermes",
     "max_length": 1200
   },
+  "llm_report": {
+    "enabled": true,
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "temperature": 0.3,
+    "max_tokens": 4000,
+    "env_api_key": "DEEPSEEK_API_KEY",
+    "env_base_url": "DEEPSEEK_BASE_URL"
+  },
   "features": {
+    "llm_report": true,
     "minute_data": true,
     "fund_flow": true,
     "sector_comparison": true,

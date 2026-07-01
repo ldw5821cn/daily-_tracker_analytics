@@ -34,14 +34,56 @@ except ImportError:
 class NewsFetcher:
     """新闻获取器"""
     
-    # 行业关键词映射
+    # 行业关键词映射（含上下游产业链）
     INDUSTRY_KEYWORDS = {
-        "稀土永磁": ["稀土", "永磁", "磁材", "钕铁硼", "镨钕", "氧化镨钕", "北方稀土", "中国稀土"],
-        "机器人": ["机器人", "工业机器人", "人形机器人", "协作机器人", "机器人概念", "减速器", "伺服电机"],
-        "人工智能": ["人工智能", "AI", "大模型", "GPT", "ChatGPT", "AIGC", "机器学习", "深度学习"],
-        "芯片制造": ["芯片", "半导体", "晶圆", "代工", "光刻", "刻蚀", "薄膜沉积", "中芯国际"],
-        "存储行业": ["存储", "内存", "DRAM", "NAND", "闪存", "SSD", "HBM", "长鑫存储", "长江存储"],
-        "内存制造": ["内存", "DRAM", "DDR", "LPDDR", "HBM", "存储芯片", "长鑫存储"]
+        "稀土永磁": [
+            "稀土", "永磁", "磁材", "钕铁硼", "镨钕", "氧化镨钕", "北方稀土", "中国稀土",
+            "镧铈", "钆", "钬", "重稀土", "轻稀土", "稀土矿", "稀土开采", "稀土分离",
+            "磁材电机", "永磁电机", "新能源车电机", "风电电机", "节能电机",
+            "稀土出口管制", "稀土配额", "稀土氧化物", "金属镨钕"
+        ],
+        "机器人": [
+            "机器人", "工业机器人", "人形机器人", "协作机器人", "机器人概念", "减速器", "伺服电机",
+            "谐波减速器", "RV减速器", "行星滚柱丝杠", "空心杯电机", "力传感器", "视觉传感器",
+            "灵巧手", "具身智能", "通用人形机器人", "Optimus", "Figure", "特斯拉机器人",
+            "宇树科技", "优必选", "埃斯顿", "汇川技术", "绿的谐波", "三花智控"
+        ],
+        "人工智能": [
+            "人工智能", "AI", "大模型", "GPT", "ChatGPT", "AIGC", "机器学习", "深度学习",
+            "生成式AI", "LLM", "多模态", "AI Agent", "智能体", "RAG", "算力",
+            "AI芯片", "AI服务器", "液冷服务器", "光模块", "CPO", "英伟达", "NVIDIA",
+            "OpenAI", "Anthropic", "Gemini", "百度文心", "阿里通义", "字节豆包", "月之暗面"
+        ],
+        "芯片制造": [
+            "芯片", "半导体", "晶圆", "代工", "光刻", "刻蚀", "薄膜沉积", "中芯国际",
+            "台积电", "先进制程", "7nm", "5nm", "3nm", "EUV光刻机", "DUV光刻机",
+            "半导体设备", "半导体材料", "光刻胶", "CMP抛光液", "电子特气", "硅片",
+            "晶圆厂", "IDM", "Fabless", "Chiplet", "先进封装", "SoC", "ASIC"
+        ],
+        "存储行业": [
+            "存储", "内存", "DRAM", "NAND", "闪存", "SSD", "HBM", "长鑫存储", "长江存储",
+            "存储芯片", "NOR Flash", "eMMC", "UFS", "DDR5", "DDR6", "LPDDR5",
+            "HBM3", "HBM3E", "HBM4", "存储模组", "存储涨价", "存储周期", "存储拐点",
+            "美光", "三星存储", "SK海力士", "西部数据", "铠侠"
+        ],
+        "内存制造": [
+            "内存", "DRAM", "DDR", "LPDDR", "HBM", "存储芯片", "长鑫存储",
+            "内存颗粒", "内存模组", "内存涨价", "DRAM周期", "内存制造", "内存芯片",
+            "HBM产能", "高带宽内存", "DDR5", "DDR4", "LPDDR5X"
+        ]
+    }
+    
+    # 数据源与上游/国际标签
+    NEWS_SOURCES = ["akshare", "sina", "eastmoney"]
+    
+    # 关键股票/标的映射（用于后续关联ETF成分股）
+    INDUSTRY_TICKERS = {
+        "稀土永磁": ["600111", "600010", "000831", "600259", "300748", "600549", "600392", "688077"],
+        "机器人": ["002747", "300124", "603728", "002031", "603915", "300750", "002050", "601100"],
+        "人工智能": ["300308", "002230", "300418", "688256", "603019", "688981", "300502"],
+        "芯片制造": ["688981", "603893", "600584", "300661", "688012", "002371", "603501"],
+        "存储行业": ["688525", "688416", "300223", "688110", "603986", "002185"],
+        "内存制造": ["688525", "688416", "300223", "688110"]
     }
     
     @staticmethod
@@ -107,6 +149,9 @@ class NewsFetcher:
         """使用AkShare获取行业新闻"""
         try:
             import akshare as ak
+            import pandas as pd
+            # 修复 pyarrow ArrowStringArray 正则转义问题：切换到 python string backend
+            pd.options.mode.string_storage = 'python'
             
             # 获取财经新闻
             df = ak.stock_news_em()
@@ -114,21 +159,28 @@ class NewsFetcher:
             if len(df) == 0:
                 return []
             
+            # 兼容新旧列名
+            title_col = '新闻标题' if '新闻标题' in df.columns else '标题'
+            content_col = '新闻内容' if '新闻内容' in df.columns else '内容'
+            url_col = '链接' if '链接' in df.columns else '新闻链接'
+            source_col = '文章来源' if '文章来源' in df.columns else '来源'
+            time_col = '发布时间' if '发布时间' in df.columns else '时间'
+            
             # 筛选相关行业新闻
             keywords = NewsFetcher.INDUSTRY_KEYWORDS.get(industry, [industry])
             
             filtered_news = []
             for _, row in df.iterrows():
-                title = str(row.get('标题', ''))
-                content = str(row.get('内容', ''))
+                title = str(row.get(title_col, ''))
+                content = str(row.get(content_col, ''))
                 
                 # 检查是否包含关键词
                 if any(kw in title or kw in content for kw in keywords):
                     filtered_news.append({
                         "title": title,
-                        "url": row.get('链接', ''),
-                        "source": row.get('来源', '东方财富'),
-                        "time": str(row.get('发布时间', '')),
+                        "url": row.get(url_col, ''),
+                        "source": row.get(source_col, '东方财富'),
+                        "time": str(row.get(time_col, '')),
                         "summary": content[:200] + "..." if len(content) > 200 else content
                     })
             
@@ -138,8 +190,9 @@ class NewsFetcher:
             return []
     
     @staticmethod
-    def get_all_industry_news(industries: List[str] = None, days: int = 3) -> Dict[str, List[Dict]]:
-        """获取所有行业新闻"""
+    def get_all_industry_news(industries: Optional[List[str]] = None, days: int = 3,
+                               max_news_per_source: int = 10) -> Dict[str, List[Dict]]:
+        """获取所有行业新闻（多源聚合）"""
         if industries is None:
             industries = list(NewsFetcher.INDUSTRY_KEYWORDS.keys())
         
@@ -147,16 +200,49 @@ class NewsFetcher:
         for industry in industries:
             print(f"  正在获取 {industry} 行业新闻...")
             
-            # 优先使用AkShare
-            news = NewsFetcher.get_industry_news_from_akshare(industry, days)
+            aggregated = []
+            seen_titles = set()
             
-            # 如果AkShare失败，尝试其他源
-            if len(news) == 0:
-                news = NewsFetcher.get_news_from_sina(industry, days)
+            def _dedup_add(news_list, source_tag):
+                for item in news_list[:max_news_per_source]:
+                    title = item.get('title', '')
+                    if not title or title in seen_titles:
+                        continue
+                    seen_titles.add(title)
+                    item['source_tag'] = source_tag
+                    aggregated.append(item)
             
-            all_news[industry] = news
-            print(f"  获取到 {len(news)} 条新闻")
+            # 多源并行获取
+            try:
+                _dedup_add(NewsFetcher.get_industry_news_from_akshare(industry, days), 'akshare')
+            except Exception as e:
+                print(f"    akshare 获取失败: {e}")
+            try:
+                _dedup_add(NewsFetcher.get_news_from_sina(industry, days), 'sina')
+            except Exception as e:
+                print(f"    sina 获取失败: {e}")
+            try:
+                _dedup_add(NewsFetcher.get_news_from_eastmoney(industry, days), 'eastmoney')
+            except Exception as e:
+                print(f"    eastmoney 获取失败: {e}")
+            
+            all_news[industry] = aggregated
+            print(f"  获取到 {len(aggregated)} 条去重新闻")
         
+        return all_news
+    
+    @staticmethod
+    def get_multi_industry_news(industries: Optional[List[str]] = None, days: int = 3,
+                                max_news_per_source: int = 5) -> Dict[str, List[Dict]]:
+        """供外部调用：获取多行业新闻（含情感标签）"""
+        if industries is None:
+            industries = list(NewsFetcher.INDUSTRY_KEYWORDS.keys())
+        all_news = NewsFetcher.get_all_industry_news(industries, days, max_news_per_source)
+        for industry, news_list in all_news.items():
+            for item in news_list:
+                sentiment = NewsAnalyzer.analyze_sentiment(item)
+                item['sentiment'] = sentiment['sentiment']
+                item['sentiment_score'] = sentiment['score']
         return all_news
 
 

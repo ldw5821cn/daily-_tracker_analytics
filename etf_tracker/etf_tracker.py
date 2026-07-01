@@ -70,6 +70,13 @@ except ImportError:
         def generate_market_analysis(self):
             return ""
 
+# 导入 LLM 决策报告生成器
+try:
+    from llm_report_generator import LLMReportGenerator
+    LLM_REPORT_AVAILABLE = True
+except ImportError:
+    LLM_REPORT_AVAILABLE = False
+
 
 # 占位类，避免导入失败时引用错误
 if not MULTI_MODEL_AVAILABLE:
@@ -1271,7 +1278,7 @@ class ReportGenerator:
 
 > **报告日期**: {date}  
 > **跟踪 ETF 数量**: {len(analyzer_results)} 只  
-> **数据源**: AkShare + 东方财富 + Baostock + Yahoo Finance  
+> **数据源**: TickFlow + AkShare + 东方财富 + Baostock + Yahoo Finance  
 > **分析周期**: {'/'.join([str(p) for p in self.config.backtest_periods])}天滚动回测  
 > **覆盖主题**: 机器人 / 人工智能 / AI / 芯片制造 / 半导体设备 / 存储行业 / 内存制造 / 稀土永磁 / 有色金属 / 动力电池 / 银行 / 证券 / 消费 / 医药 / 高股息 / 通信 / 互联网 / 港股科技 / 宽基指数 / 美股科技 / 美股大盘 / 美股半导体 / 美股机器人  
 
@@ -1573,7 +1580,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     _log_timing("4.实时预警", time.time() - t3)
     
     # 5. 生成板块排名
-    print("\n【5/5】生成板块排名和综合报告...")
+    print("\n【5/6】生成板块排名和综合报告...")
     t4 = time.time()
     analyzer.results = quick_results
     sector_ranking = analyzer.get_sector_ranking()
@@ -1617,6 +1624,30 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         alerts=alerts,
         research_summary=research_summary
     )
+    
+    # 6. LLM 智能决策报告增强
+    if LLM_REPORT_AVAILABLE and config.features.get('llm_report', True) and config.config.get('llm_report', {}).get('enabled', True):
+        try:
+            print("\n【6/6】生成 LLM 智能决策报告...")
+            t_llm = time.time()
+            from industry_news_enhanced import NewsFetcher
+            news_fetcher = NewsFetcher()
+            news_data = news_fetcher.get_multi_industry_news(
+                list(NewsFetcher.INDUSTRY_KEYWORDS.keys()), days=1, max_news_per_source=5
+            )
+            llm_generator = LLMReportGenerator(config)
+            report = llm_generator.enrich_multi_etf_report(
+                report, top_etfs_detail, sector_ranking,
+                international_data=international_data,
+                news_data=news_data,
+                research_summary=research_summary
+            )
+            _log_timing("6.LLM决策报告", time.time() - t_llm)
+        except Exception as e:
+            print(f"  LLM 报告生成失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
     _log_timing("5.报告生成", time.time() - t4)
     
     # 保存报告
@@ -1626,8 +1657,53 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         f.write(report)
     print(f"\n报告已保存: {report_path}")
     
-    # 5. 微信推送
-    t4 = time.time()
+    # 7. 历史持久化与回测验证
+    t6 = time.time()
+    try:
+        from analysis_history_tracker import AnalysisHistoryTracker
+        history_tracker = AnalysisHistoryTracker()
+        # 保存所有 ETF 快照
+        for r in quick_results:
+            history_tracker.save_daily_snapshot(r['code'], report_date, {
+                'current_price': r['current_price'],
+                'score': r['signals'].get('score'),
+                'signal': r['signals'].get('overall_signal'),
+                'position_size': r['position'].get('position_size') if isinstance(r['position'], dict) else None,
+                'sector': r.get('sector'),
+                'theme': r.get('theme'),
+                'rsi14': r['signals'].get('rsi14'),
+                'macd_status': r['signals'].get('macd_status'),
+                'ma_status': r['signals'].get('ma_status'),
+                'backtest': r['backtest']
+            })
+        # 保存重点 ETF 的预测
+        for r in top_etfs_detail:
+            if r.get('multi_model'):
+                ensemble = r['multi_model'].get('ensemble', {})
+                individual = r['multi_model'].get('individual', {})
+                history_tracker.save_prediction(r['code'], report_date, {
+                    'period_days': 1,
+                    'ensemble': ensemble,
+                    'individual': individual
+                })
+                # 5日预测
+                if 'day_5' in ensemble or 'return_5d' in ensemble:
+                    history_tracker.save_prediction(r['code'], report_date, {
+                        'period_days': 5,
+                        'ensemble': ensemble,
+                        'individual': individual
+                    })
+        # 验证历史预测
+        history_tracker.validate_all_pending_predictions()
+        print("  分析历史已持久化")
+    except Exception as e:
+        print(f"  历史持久化失败: {e}")
+        import traceback
+        traceback.print_exc()
+    _log_timing("7.历史持久化", time.time() - t6)
+    
+    # 8. 微信推送
+    t7 = time.time()
     if enable_wechat_push and config.features.get('wechat_push', True):
         try:
             from hermes_wechat_pusher import HermesWeChatPusher
@@ -1637,7 +1713,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
             print("微信推送已发送")
         except Exception as e:
             print(f"微信推送失败: {e}")
-    _log_timing("5.微信推送", time.time() - t4)
+    _log_timing("8.微信推送", time.time() - t7)
     
     total_time = time.time() - start_time
     _log_timing("总耗时", total_time)
