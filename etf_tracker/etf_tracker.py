@@ -511,7 +511,7 @@ class ETFDataFetcher:
                     print(f"  [ETFDataFetcher] 使用 Yahoo Finance 获取美股 {stock_code} 数据...")
                     import yfinance as yf
                     ticker = yf.Ticker(stock_code)
-                    df = ticker.history(period=f"{days*2}d")
+                    df = ticker.history(period="2y")
                     if len(df) == 0:
                         raise ValueError("Yahoo Finance 返回空数据")
                     df = df.reset_index()
@@ -534,8 +534,17 @@ class ETFDataFetcher:
                 try:
                     print(f"  [ETFDataFetcher] 使用 Yahoo Finance 获取港股 {stock_code} 数据...")
                     import yfinance as yf
-                    ticker = yf.Ticker(stock_code)
-                    df = ticker.history(period=f"{days*2}d")
+                    # yfinance 对港股 4 位代码需要保留前导零，但首位不能为 0
+                    # 00700.HK 需要转为 0700.HK
+                    numeric = stock_code[:-3]
+                    if len(numeric) > 4 and numeric.startswith('0'):
+                        numeric = numeric.lstrip('0')
+                        if len(numeric) < 4:
+                            numeric = numeric.zfill(4)
+                    yf_code = numeric + '.HK'
+                    print(f"  使用 Yahoo 代码: {yf_code}")
+                    ticker = yf.Ticker(yf_code)
+                    df = ticker.history(period="2y")
                     if len(df) == 0:
                         raise ValueError("Yahoo Finance 返回空数据")
                     df = df.reset_index()

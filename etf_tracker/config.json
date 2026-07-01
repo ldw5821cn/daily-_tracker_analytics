@@ -46,7 +46,7 @@
       "name": "akshare",
       "source_type": "akshare",
       "enabled": true,
-      "priority": 1,
+      "priority": 2,
       "timeout": 15,
       "retry_count": 3,
       "retry_delay": 2.0,
@@ -72,7 +72,7 @@
       "timeout": 20,
       "retry_count": 3,
       "retry_delay": 3.0,
-      "token": "",
+      "token": "951dfac090ebe612b94fe6a8b58ad69e0783411274be69a29b538cc4",
       "api_key": ""
     },
     {
@@ -90,7 +90,7 @@
       "name": "yfinance",
       "source_type": "yfinance",
       "enabled": true,
-      "priority": 2,
+      "priority": 1,
       "timeout": 20,
       "retry_count": 3,
       "retry_delay": 2.0,

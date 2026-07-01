@@ -492,7 +492,7 @@ class TushareAdapter(BaseDataAdapter):
             
             # Tushare ETF代码格式: 516150.SH
             if not etf_code.endswith('.SH') and not etf_code.endswith('.SZ'):
-                if etf_code.startswith('5') or etf_code.startswith('5'):
+                if etf_code.startswith('5'):
                     ts_code = f"{etf_code}.SH"
                 else:
                     ts_code = f"{etf_code}.SZ"
@@ -502,7 +502,12 @@ class TushareAdapter(BaseDataAdapter):
             end_date = datetime.now().strftime('%Y%m%d')
             start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y%m%d')
             
-            df = self._pro.fund_daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            # fund_daily 需要付费权限，降级使用 stock_daily 作为 ETF 日线来源
+            # 大多数 ETF 在 Tushare 中可以通过 daily 接口获取
+            try:
+                df = self._pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            except Exception:
+                df = self._pro.fund_daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
             
             if len(df) == 0:
                 raise ValueError("Tushare 返回空数据")
@@ -821,7 +826,13 @@ class YFinanceAdapter(BaseDataAdapter):
         """转换A股/港股/美股代码为 Yahoo Finance 格式"""
         # 港股代码 (如 0700.HK, 9988.HK)
         if code.endswith('.HK'):
-            return code[:-3] + '.HK'
+            # yfinance 对港股代码要求：5位数字去掉首位0，保留为4位
+            numeric = code[:-3]
+            if len(numeric) > 4 and numeric.startswith('0'):
+                numeric = numeric.lstrip('0')
+                if len(numeric) < 4:
+                    numeric = numeric.zfill(4)
+            return numeric + '.HK'
         
         # 美股代码 (纯字母或常见美股代码，如 QQQ, SPY, AAPL, BRK-B)
         if code.isalpha() or (len(code) <= 5 and code.replace('-', '').isalnum() and not code.isdigit()):
