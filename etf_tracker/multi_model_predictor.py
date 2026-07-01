@@ -18,6 +18,9 @@ warnings.filterwarnings('ignore')
 if not hasattr(sys, 'real_prefix') and sys.base_prefix == sys.prefix:
     sys.path.insert(0, '/home/zhihu/.linuxbrew/Cellar/python@3.10/3.10.9/lib/python3.10/site-packages')
 
+# 导入 LSTM 模型缓存
+import lstm_model_cache as lstm_cache
+
 # 尝试导入各种模型
 try:
     import lightgbm as lgb
@@ -241,11 +244,12 @@ class CrossValidator:
 class MultiModelPredictor:
     """多模型预测器 - 集成多种算法"""
     
-    def __init__(self):
+    def __init__(self, etf_code: Optional[str] = None):
         self.models = {}
         self.cv_results = {}
         self.feature_importance = {}
         self.scalers = {}
+        self.etf_code = etf_code
         
     def train_lightgbm(self, X_train: np.ndarray, y_train: np.ndarray, 
                        X_test: np.ndarray, y_test: np.ndarray,
@@ -475,6 +479,10 @@ class MultiModelPredictor:
         
         self.models['lstm'] = models
         
+        # 保存 LSTM 模型到本地缓存（收盘后训练时可用）
+        if self.etf_code:
+            lstm_cache.save_lstm_model(self.etf_code, models, scaler_X, scaler_y)
+        
         # 评估：使用主时间窗口(10)的测试集
         main_ts = 10 if 'lstm_ts10' in models else list(models.keys())[0].replace('lstm_ts', '')
         main_ts = int(main_ts)
@@ -553,7 +561,7 @@ class MultiModelPredictor:
         
         # 加权求和
         weighted = Multiply()([x, attention])
-        context = Lambda(lambda x: K.sum(x, axis=1))(weighted)
+        context = Lambda(lambda x: K.sum(x, axis=1), output_shape=(lambda s: (s[0], s[2])))(weighted)
         
         # 输出层
         x = Dense(32, activation='relu')(context)
@@ -712,7 +720,7 @@ class MultiModelPredictor:
         except Exception as e:
             return {'error': f'Prophet training failed: {str(e)}'}
     
-    def train_all_models(self, df: pd.DataFrame, target_col: str = 'target_1d') -> Dict:
+    def train_all_models(self, df: pd.DataFrame, target_col: str = 'target_1d', skip_lstm: bool = False) -> Dict:
         """训练所有可用模型"""
         print("\n=== 多模型训练开始 ===")
         
@@ -751,11 +759,13 @@ class MultiModelPredictor:
             )
         
         # 4. LSTM
-        if KERAS_AVAILABLE:
+        if KERAS_AVAILABLE and not skip_lstm:
             print("\n5. LSTM")
             results['lstm'] = self.train_lstm(
                 X_train, y_train, X_test, y_test, feature_names
             )
+        elif skip_lstm:
+            print("\n5. LSTM (跳过，将使用缓存模型)")
         
         # 5. ARIMA
         if STATSMODELS_AVAILABLE:
@@ -772,6 +782,22 @@ class MultiModelPredictor:
         
         print("\n=== 多模型训练完成 ===")
         return results
+    
+    def load_cached_lstm(self, df: pd.DataFrame) -> bool:
+        """尝试加载缓存的 LSTM 模型，并准备其他模型（树模型+ARIMA）"""
+        if not self.etf_code:
+            return False
+        
+        if not lstm_cache.is_cache_valid(self.etf_code):
+            return False
+        
+        cached_models = lstm_cache.load_lstm_model(self.etf_code)
+        if not cached_models:
+            return False
+        
+        self.models['lstm'] = cached_models
+        print(f"  ✅ LSTM 使用隔夜缓存模型 ({self.etf_code})")
+        return True
     
     def ensemble_predict(self, df: pd.DataFrame, days: int = 5) -> Dict:
         """

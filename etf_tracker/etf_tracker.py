@@ -122,13 +122,16 @@ class MultiETFAnalyzer:
             multi_model = None
             if MULTI_MODEL_AVAILABLE:
                 try:
-                    predictor = MultiModelPredictor()
-                    training_results = predictor.train_all_models(df, target_col='target_1d')
+                    predictor = MultiModelPredictor(etf_code)
+                    # 先尝试加载隔夜 LSTM 缓存，如果有效则跳过训练
+                    has_lstm_cache = predictor.load_cached_lstm(df)
+                    training_results = predictor.train_all_models(
+                        df, target_col='target_1d', skip_lstm=has_lstm_cache
+                    )
                     ensemble_result = predictor.ensemble_predict(df, days=5)
                     multi_model = {
-                        'ensemble': ensemble_result['ensemble'],
-                        'individual': ensemble_result['individual_predictions'],
-                        'training': training_results
+                        'predictions': ensemble_result['individual_predictions'],
+                        'ensemble': ensemble_result['ensemble']
                     }
                 except Exception as e:
                     print(f"  多模型预测失败: {e}")
@@ -1577,8 +1580,12 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     for r in top_etfs:
         try:
             if MULTI_MODEL_AVAILABLE:
-                predictor = MultiModelPredictor()
-                training = predictor.train_all_models(r['df'], target_col='target_1d')
+                predictor = MultiModelPredictor(r['code'])
+                # 先尝试加载隔夜 LSTM 缓存，如果有效则跳过训练
+                has_lstm_cache = predictor.load_cached_lstm(r['df'])
+                training = predictor.train_all_models(
+                    r['df'], target_col='target_1d', skip_lstm=has_lstm_cache
+                )
                 ensemble = predictor.ensemble_predict(r['df'], days=5)
                 r['multi_model'] = {
                     'ensemble': ensemble['ensemble'],
