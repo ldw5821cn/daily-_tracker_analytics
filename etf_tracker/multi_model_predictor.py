@@ -51,14 +51,32 @@ try:
     import tensorflow as tf
     from tensorflow.keras.models import Sequential, Model
     from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
-    from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Reshape, Multiply, Lambda, Input
+    from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Reshape, Multiply, Lambda, Input, Layer
     from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
     from tensorflow.keras.optimizers import Adam
     import tensorflow.keras.backend as K
     KERAS_AVAILABLE = True
+    
+    @tf.keras.utils.register_keras_serializable()
+    class AttentionWeightedSum(Layer):
+        def __init__(self, axis=1, **kwargs):
+            self.axis = axis
+            super().__init__(**kwargs)
+        
+        def call(self, inputs):
+            return tf.reduce_sum(inputs, axis=self.axis)
+        
+        def compute_output_shape(self, input_shape):
+            return input_shape[:self.axis] + input_shape[self.axis+1:]
+        
+        def get_config(self):
+            config = super().get_config()
+            config.update({'axis': self.axis})
+            return config
+    
 except ImportError:
     KERAS_AVAILABLE = False
-    print("  ⚠️ TensorFlow/Keras 未安装")
+    AttentionWeightedSum = None
 
 try:
     from statsmodels.tsa.arima.model import ARIMA
@@ -429,6 +447,9 @@ class MultiModelPredictor:
         models = {}
         histories = {}
         
+        # 保存训练时的特征列，预测时保持维度一致
+        feature_cols = list(range(X_train.shape[1]))
+        
         def create_sequences(X, y, timesteps):
             X_seq, y_seq = [], []
             for i in range(len(X) - timesteps):
@@ -470,7 +491,8 @@ class MultiModelPredictor:
                 'model': model,
                 'timesteps': ts,
                 'scaler_X': scaler_X,
-                'scaler_y': scaler_y
+                'scaler_y': scaler_y,
+                'feature_cols': feature_cols
             }
             histories[f'lstm_ts{ts}'] = history
         
@@ -554,14 +576,16 @@ class MultiModelPredictor:
         x = Dropout(0.25)(x)
         
         # Attention 机制
-        attention = Dense(1, activation='tanh')(x)
-        attention = Flatten()(attention)
-        attention = tf.keras.layers.Activation('softmax')(attention)
-        attention = Reshape((-1, 1))(attention)
+        attention = Dense(1, activation='tanh', name='attention_dense')(x)
+        attention = Flatten(name='attention_flatten')(attention)
+        attention = tf.keras.layers.Activation('softmax', name='attention_softmax')(attention)
         
-        # 加权求和
-        weighted = Multiply()([x, attention])
-        context = Lambda(lambda x: K.sum(x, axis=1), output_shape=(lambda s: (s[0], s[2])))(weighted)
+        # 计算 BiLSTM 输出到当前层的时间步数（考虑 CNN+MaxPool 后长度减半）
+        from math import ceil
+        ts_after_cnn = ceil(timesteps / 2)  # MaxPooling1D(pool_size=2) 后长度减半
+        attention = Reshape((ts_after_cnn, 1), name='attention_reshape')(attention)
+        weighted = Multiply(name='attention_weighted')([x, attention])
+        context = AttentionWeightedSum(axis=1, name='attention_weighted_sum')(weighted)
         
         # 输出层
         x = Dense(32, activation='relu')(context)
@@ -611,12 +635,18 @@ class MultiModelPredictor:
         models = self.models['lstm']
         scaler_X = list(models.values())[0]['scaler_X']
         scaler_y = list(models.values())[0]['scaler_y']
+        feature_cols = list(models.values())[0].get('feature_cols', None)
         
         exclude_cols = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount',
                        'target_1d', 'target_3d', 'target_5d', 'returns', 'log_returns']
-        feature_cols = [col for col in df_features.columns if col not in exclude_cols]
+        all_feature_cols = [col for col in df_features.columns if col not in exclude_cols]
         
-        X_latest = df_features[feature_cols].values
+        # 如果缓存记录了训练时的特征列，使用缓存的维度
+        if feature_cols is not None and len(feature_cols) != len(all_feature_cols):
+            if len(feature_cols) <= len(all_feature_cols):
+                all_feature_cols = all_feature_cols[:len(feature_cols)]
+        
+        X_latest = df_features[all_feature_cols].values
         X_scaled = scaler_X.transform(X_latest)
         
         predictions = []

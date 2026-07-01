@@ -141,12 +141,17 @@ def load_lstm_model(etf_code: str) -> Optional[Dict]:
         models = {}
         for ts in info['timesteps']:
             model_path = os.path.join(model_dir, f'model_ts{ts}.keras')
-            model = tf.keras.models.load_model(model_path, safe_mode=False)
+            # 加载模型
+            import tensorflow as tf
+            from multi_model_predictor import AttentionWeightedSum
+            custom_objects = {'AttentionWeightedSum': AttentionWeightedSum}
+            model = tf.keras.models.load_model(model_path, safe_mode=False, custom_objects=custom_objects)
             models[f'lstm_ts{ts}'] = {
                 'model': model,
                 'timesteps': ts,
                 'scaler_X': scaler_X,
-                'scaler_y': scaler_y
+                'scaler_y': scaler_y,
+                'feature_cols': list(range(scaler_X.n_features_in_)) if hasattr(scaler_X, 'n_features_in_') else list(range(scaler_X.scale_.shape[0]))
             }
         
         print(f"  ✅ 加载 LSTM 缓存 ({etf_code}, 训练日期: {info['train_date']})")
