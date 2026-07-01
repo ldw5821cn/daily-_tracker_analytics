@@ -2,7 +2,7 @@
 """
 统一数据源管理器 (DataSourceManager)
 支持多数据源优先级配置和故障自动切换
-集成: AkShare, 东方财富, Tushare, Baostock, Yahoo Finance
+集成: TickFlow, AkShare, 东方财富, Tushare, Baostock, Yahoo Finance
 """
 
 import os
@@ -21,6 +21,7 @@ warnings.filterwarnings('ignore')
 
 class DataSourceType(Enum):
     """数据源类型枚举"""
+    TICKFLOW = "tickflow"
     AKSHARE = "akshare"
     EASTMONEY = "eastmoney"
     TUSHARE = "tushare"
@@ -163,6 +164,177 @@ class BaseDataAdapter:
         df = df.sort_values('date').reset_index(drop=True)
         
         return df
+
+
+class TickFlowAdapter(BaseDataAdapter):
+    """TickFlow 数据源适配器 - 支持 A股/ETF/港股/美股 实时+历史行情"""
+    
+    BASE_URL = "https://api.tickflow.org"
+    
+    def __init__(self, config: DataSourceConfig):
+        super().__init__(config)
+        self.api_key = config.api_key or config.token or os.environ.get("TICKFLOW_API_KEY", "")
+        if not self.api_key:
+            self.status.record_error("TickFlow api_key 未配置")
+    
+    def _headers(self) -> dict:
+        return {
+            "x-api-key": self.api_key,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+    
+    def _request(self, path: str, params: dict = None) -> dict:
+        """发起 GET 请求并返回 JSON，带基础限流保护"""
+        import urllib.parse, urllib.error
+        params = params or {}
+        url = f"{self.BASE_URL}{path}"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers=self._headers())
+        
+        # 简单限流：连续请求间隔至少 0.2 秒
+        now = time.time()
+        elapsed = now - getattr(self, "_last_request_time", 0)
+        if elapsed < 0.2:
+            time.sleep(0.2 - elapsed)
+        
+        try:
+            resp = urllib.request.urlopen(req, timeout=self.config.timeout)
+            self._last_request_time = time.time()
+            return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            self._last_request_time = time.time()
+            # 遇到 429 时读取错误体，避免异常信息为空
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                err_body = ""
+            raise urllib.error.HTTPError(url, e.code, e.reason, e.headers, None) from e
+        except Exception:
+            self._last_request_time = time.time()
+            raise
+    
+    def _to_tickflow_symbol(self, code: str) -> str:
+        """将内部代码转换为 TickFlow 标的格式"""
+        # 已经是 TickFlow/交易所格式
+        if "." in code and any(code.endswith(s) for s in (".SH", ".SZ", ".BJ", ".HK")):
+            return code
+        # 美股代码（纯字母，如 QQQ, SPY, TSLA）
+        if code.isalpha() or (len(code) <= 5 and code.replace("-", "").isalnum() and not code.isdigit()):
+            return code
+        # 港股代码 - TickFlow 使用 4 位数字 + .HK
+        if code.endswith(".HK"):
+            numeric = code[:-3]
+            # 去除前导零，保留最多4位
+            numeric = numeric.lstrip("0")
+            if len(numeric) < 4:
+                numeric = numeric.zfill(4)
+            return numeric + ".HK"
+        # A股/ETF
+        if code.startswith("6") or code.startswith("5"):
+            return f"{code}.SH"
+        elif code.startswith("0") or code.startswith("3") or code.startswith("1"):
+            return f"{code}.SZ"
+        elif code.startswith("4") or code.startswith("8"):
+            return f"{code}.BJ"
+        return code
+    
+    def _klines_to_df(self, resp: dict) -> pd.DataFrame:
+        """将 TickFlow 列式 K线响应转换为 DataFrame"""
+        data = resp.get("data")
+        if not data:
+            raise ValueError("TickFlow 返回空数据")
+        
+        timestamps = data.get("timestamp", [])
+        if not timestamps:
+            raise ValueError("TickFlow K线数据无时间戳")
+        
+        records = []
+        n = len(timestamps)
+        for i in range(n):
+            records.append({
+                "date": datetime.fromtimestamp(timestamps[i] / 1000),
+                "open": data.get("open", [0] * n)[i],
+                "high": data.get("high", [0] * n)[i],
+                "low": data.get("low", [0] * n)[i],
+                "close": data.get("close", [0] * n)[i],
+                "volume": int(data.get("volume", [0] * n)[i]) if data.get("volume") else 0,
+                "amount": data.get("amount", [0] * n)[i] if data.get("amount") else 0,
+            })
+        
+        df = pd.DataFrame(records)
+        return self._normalize_kline_df(df)
+    
+    def get_etf_kline(self, etf_code: str, days: int = 120) -> pd.DataFrame:
+        start_time = time.time()
+        try:
+            if not self.api_key:
+                raise ValueError("TickFlow api_key 未配置")
+            
+            symbol = self._to_tickflow_symbol(etf_code)
+            # 多获取一些数据，防止节假日缺失
+            resp = self._request("/v1/klines", {
+                "symbol": symbol,
+                "period": "1d",
+                "count": min(days * 2, 10000)
+            })
+            
+            df = self._klines_to_df(resp)
+            if len(df) > days:
+                df = df.tail(days).reset_index(drop=True)
+            
+            self.status.record_success(time.time() - start_time)
+            return df
+            
+        except Exception as e:
+            self.status.record_error(str(e))
+            raise
+    
+    def get_stock_kline(self, stock_code: str, days: int = 120) -> pd.DataFrame:
+        # ETF 和个股接口一致
+        return self.get_etf_kline(stock_code, days)
+    
+    def get_index_data(self, index_code: str, days: int = 120) -> pd.DataFrame:
+        return self.get_etf_kline(index_code, days)
+    
+    def get_realtime_quote(self, code: str) -> Dict:
+        start_time = time.time()
+        try:
+            if not self.api_key:
+                raise ValueError("TickFlow api_key 未配置")
+            
+            symbol = self._to_tickflow_symbol(code)
+            resp = self._request("/v1/quotes", {"symbols": symbol})
+            quotes = resp.get("data", [])
+            if not quotes:
+                raise ValueError("TickFlow 返回空行情")
+            
+            q = quotes[0]
+            ext = q.get("ext") or {}
+            result = {
+                "code": code,
+                "symbol": q.get("symbol"),
+                "price": float(q.get("last_price", 0)),
+                "open": float(q.get("open", 0)),
+                "high": float(q.get("high", 0)),
+                "low": float(q.get("low", 0)),
+                "prev_close": float(q.get("prev_close", 0)),
+                "volume": int(q.get("volume", 0)),
+                "amount": float(q.get("amount", 0)),
+                "change_pct": float(ext.get("change_pct", 0)) if isinstance(ext, dict) else 0,
+                "name": ext.get("name", "") if isinstance(ext, dict) else "",
+                "source": "tickflow"
+            }
+            self.status.record_success(time.time() - start_time)
+            return result
+            
+        except Exception as e:
+            self.status.record_error(str(e))
+            raise
+    
+    def get_fund_flow(self, code: str) -> Dict:
+        # TickFlow 暂无资金流向接口，返回空
+        return {"source": "tickflow", "note": "资金流向数据暂不支持"}
 
 
 class AkShareAdapter(BaseDataAdapter):
@@ -984,16 +1156,18 @@ class DataSourceManager:
     def _get_default_configs(self) -> List[DataSourceConfig]:
         """获取默认配置"""
         return [
-            DataSourceConfig(name="akshare", source_type=DataSourceType.AKSHARE, priority=1),
-            DataSourceConfig(name="eastmoney", source_type=DataSourceType.EASTMONEY, priority=2),
-            DataSourceConfig(name="tushare", source_type=DataSourceType.TUSHARE, priority=3, token=""),
-            DataSourceConfig(name="baostock", source_type=DataSourceType.BAOSTOCK, priority=4),
-            DataSourceConfig(name="yfinance", source_type=DataSourceType.YFINANCE, priority=5),
+            DataSourceConfig(name="tickflow", source_type=DataSourceType.TICKFLOW, priority=1, api_key=""),
+            DataSourceConfig(name="akshare", source_type=DataSourceType.AKSHARE, priority=2),
+            DataSourceConfig(name="eastmoney", source_type=DataSourceType.EASTMONEY, priority=3),
+            DataSourceConfig(name="tushare", source_type=DataSourceType.TUSHARE, priority=4, token=""),
+            DataSourceConfig(name="baostock", source_type=DataSourceType.BAOSTOCK, priority=5),
+            DataSourceConfig(name="yfinance", source_type=DataSourceType.YFINANCE, priority=6),
         ]
     
     def _init_adapters(self):
         """初始化适配器"""
         adapter_map = {
+            DataSourceType.TICKFLOW: TickFlowAdapter,
             DataSourceType.AKSHARE: AkShareAdapter,
             DataSourceType.EASTMONEY: EastMoneyAdapter,
             DataSourceType.TUSHARE: TushareAdapter,

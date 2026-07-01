@@ -40,8 +40,19 @@
     280,
     365
   ],
-  "data_source": "akshare",
+  "data_source": "tickflow",
   "data_sources": [
+    {
+      "name": "tickflow",
+      "source_type": "tickflow",
+      "enabled": true,
+      "priority": 1,
+      "timeout": 15,
+      "retry_count": 3,
+      "retry_delay": 2.0,
+      "token": "",
+      "api_key": "tk_a6dccefabd014f4e92b0d7b7af7ac3e6"
+    },
     {
       "name": "akshare",
       "source_type": "akshare",
@@ -90,7 +101,7 @@
       "name": "yfinance",
       "source_type": "yfinance",
       "enabled": true,
-      "priority": 1,
+      "priority": 6,
       "timeout": 20,
       "retry_count": 3,
       "retry_delay": 2.0,

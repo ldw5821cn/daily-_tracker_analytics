@@ -489,32 +489,7 @@ class ETFDataFetcher:
         if cached is not None:
             return cached
         
-        # 2. 美股代码直接走 Yahoo Finance
-        if etf_code.isalpha() or (len(etf_code) <= 5 and etf_code.isupper()):
-            if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
-                try:
-                    print(f"  [ETFDataFetcher] 使用 Yahoo Finance 获取美股 {etf_code} 数据...")
-                    import yfinance as yf
-                    ticker = yf.Ticker(etf_code)
-                    df = ticker.history(period=f"{days*2}d")
-                    if len(df) == 0:
-                        raise ValueError("Yahoo Finance 返回空数据")
-                    df = df.reset_index()
-                    df = df.rename(columns={
-                        'Date': 'date', 'Open': 'open', 'Close': 'close',
-                        'High': 'high', 'Low': 'low', 'Volume': 'volume'
-                    })
-                    df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
-                    df = df.sort_values('date').reset_index(drop=True)
-                    if len(df) > days:
-                        df = df.tail(days).reset_index(drop=True)
-                    self._save_cached_data(etf_code, df, "kline", "yfinance")
-                    print(f"  Yahoo Finance 美股数据获取成功: {len(df)} 条")
-                    return df
-                except Exception as e:
-                    print(f"  Yahoo Finance 美股获取失败: {e}")
-        
-        # 3. 优先使用统一数据源管理器
+        # 2. 优先使用统一数据源管理器（TickFlow 已支持 A股/ETF/港股/美股）
         if self._dsm is not None:
             try:
                 print(f"  [ETFDataFetcher] 使用统一数据源管理器获取 {etf_code} 数据...")
@@ -556,66 +531,7 @@ class ETFDataFetcher:
         if cached is not None:
             return cached
         
-        # 2. 美股代码直接走 Yahoo Finance
-        if stock_code.isalpha() or (len(stock_code) <= 5 and stock_code.isupper()) or '-' in stock_code:
-            if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
-                try:
-                    print(f"  [ETFDataFetcher] 使用 Yahoo Finance 获取美股 {stock_code} 数据...")
-                    import yfinance as yf
-                    ticker = yf.Ticker(stock_code)
-                    df = ticker.history(period="2y")
-                    if len(df) == 0:
-                        raise ValueError("Yahoo Finance 返回空数据")
-                    df = df.reset_index()
-                    df = df.rename(columns={
-                        'Date': 'date', 'Open': 'open', 'Close': 'close',
-                        'High': 'high', 'Low': 'low', 'Volume': 'volume'
-                    })
-                    df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
-                    df = df.sort_values('date').reset_index(drop=True)
-                    if len(df) > days:
-                        df = df.tail(days).reset_index(drop=True)
-                    self._save_cached_data(stock_code, df, "stock", "yfinance")
-                    print(f"  Yahoo Finance 美股个股数据获取成功: {len(df)} 条")
-                    return df
-                except Exception as e:
-                    print(f"  Yahoo Finance 美股个股获取失败: {e}")
-        
-        # 3. 港股代码使用 Yahoo Finance
-        if stock_code.endswith('.HK'):
-            if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
-                try:
-                    print(f"  [ETFDataFetcher] 使用 Yahoo Finance 获取港股 {stock_code} 数据...")
-                    import yfinance as yf
-                    # yfinance 对港股 4 位代码需要保留前导零，但首位不能为 0
-                    # 00700.HK 需要转为 0700.HK
-                    numeric = stock_code[:-3]
-                    if len(numeric) > 4 and numeric.startswith('0'):
-                        numeric = numeric.lstrip('0')
-                        if len(numeric) < 4:
-                            numeric = numeric.zfill(4)
-                    yf_code = numeric + '.HK'
-                    print(f"  使用 Yahoo 代码: {yf_code}")
-                    ticker = yf.Ticker(yf_code)
-                    df = ticker.history(period="2y")
-                    if len(df) == 0:
-                        raise ValueError("Yahoo Finance 返回空数据")
-                    df = df.reset_index()
-                    df = df.rename(columns={
-                        'Date': 'date', 'Open': 'open', 'Close': 'close',
-                        'High': 'high', 'Low': 'low', 'Volume': 'volume'
-                    })
-                    df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
-                    df = df.sort_values('date').reset_index(drop=True)
-                    if len(df) > days:
-                        df = df.tail(days).reset_index(drop=True)
-                    self._save_cached_data(stock_code, df, "stock", "yfinance")
-                    print(f"  Yahoo Finance 港股数据获取成功: {len(df)} 条")
-                    return df
-                except Exception as e:
-                    print(f"  Yahoo Finance 港股获取失败: {e}")
-        
-        # 4. 优先使用统一数据源管理器
+        # 2. 优先使用统一数据源管理器（TickFlow 已支持 A股/ETF/港股/美股）
         if self._dsm is not None:
             try:
                 print(f"  [ETFDataFetcher] 使用统一数据源管理器获取 {stock_code} 数据...")
@@ -1073,7 +989,7 @@ class ReportGenerator:
         report = f"""# {self.etf_name} ({self.etf_code}) 投资规划报告
 
 > **报告日期**: {self.date}  
-> **数据来源**: AkShare + 东方财富  
+> **数据来源**: TickFlow + AkShare + 东方财富  
 > **分析周期**: {'/'.join([str(p) for p in self.config.backtest_periods])}天滚动回测
 
 ---
@@ -1335,7 +1251,7 @@ class ReportGenerator:
 
 *报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*  
 *分析框架: 多因子量化模型 + 多算法预测融合 (LightGBM/XGBoost/RF/ARIMA)*  
-*数据来源: AkShare + 东方财富 | 多模型预测: multi_model_prediction_*.md*
+*数据来源: TickFlow + AkShare + 东方财富 | 多模型预测: multi_model_prediction_*.md*
 """
         
         return report
@@ -1500,7 +1416,7 @@ class ReportGenerator:
 
 *报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*  
 *分析框架: 多因子量化模型 + 多模型预测融合 (LightGBM/XGBoost/RF/ARIMA/LSTM)*  
-*数据来源: AkShare + 东方财富 + Baostock + Yahoo Finance*
+*数据来源: TickFlow + AkShare + 东方财富 + Baostock + Yahoo Finance*
 """
         
         return report
