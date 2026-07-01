@@ -1371,13 +1371,10 @@ class ReportGenerator:
                     stocks = top_stocks_by_sector[sector]
                     if stocks:
                         report += "**Top 成分股跟踪**:\n\n"
-                        report += "| 股票 | 代码 | 30天收益 | 1日预测 | 趋势 |\n"
-                        report += "|------|------|----------|---------|------|\n"
+                        report += "| 股票 | 代码 | 30天收益 | 评分 | 信号 | 仓位建议 |\n"
+                        report += "|------|------|----------|------|------|----------|\n"
                         for s in stocks[:5]:
-                            pred_str = '-'
-                            if s.get('multi_model'):
-                                pred_str = f"{s['multi_model'].get('return_1d', 0)*100:+.2f}%"
-                            report += f"| {s['name']} | {s['code']} | {s['return_30d']:+.2f}% | {pred_str} | {s['trend']} |\n"
+                            report += f"| {s['name']} | {s['code']} | {s['return_30d']:+.2f}% | {s.get('score', 0):.1f} | {s.get('signal', '-')} | {s.get('position_size', 0)*100:.1f}% |\n"
                         report += "\n"
                 
                 report += "---\n\n"
