@@ -19,17 +19,34 @@ class InternationalMarketFetcher:
         '^DJI': {'name': '道琼斯工业指数', 'symbol': 'DJI', 'category': 'us_index'},
         '^GSPC': {'name': '标普500指数', 'symbol': 'SPX', 'category': 'us_index'},
         '^IXIC': {'name': '纳斯达克综合指数', 'symbol': 'IXIC', 'category': 'us_index'},
+        '^RUT': {'name': '罗素2000指数', 'symbol': 'RUT', 'category': 'us_index'},
         # 波动率
         '^VIX': {'name': 'VIX恐慌指数', 'symbol': 'VIX', 'category': 'risk'},
-        # 商品
+        # 商品 - 能源
         'CL=F': {'name': 'WTI原油', 'symbol': 'CL', 'category': 'commodity'},
+        'BZ=F': {'name': '布伦特原油', 'symbol': 'BZ', 'category': 'commodity'},
+        'NG=F': {'name': '天然气', 'symbol': 'NG', 'category': 'commodity'},
+        # 商品 - 贵金属
         'GC=F': {'name': 'COMEX黄金', 'symbol': 'GC', 'category': 'commodity'},
+        'SI=F': {'name': 'COMEX白银', 'symbol': 'SI', 'category': 'commodity'},
+        'PL=F': {'name': '铂金', 'symbol': 'PL', 'category': 'commodity'},
+        # 商品 - 工业金属
         'HG=F': {'name': 'COMEX铜', 'symbol': 'HG', 'category': 'commodity'},
-        # 汇率
+        'ALI=F': {'name': '伦铝', 'symbol': 'ALI', 'category': 'commodity'},
+        # 商品 - 农产品/软商品
+        'ZW=F': {'name': '小麦', 'symbol': 'ZW', 'category': 'commodity'},
+        'ZS=F': {'name': '大豆', 'symbol': 'ZS', 'category': 'commodity'},
+        'CC=F': {'name': '可可', 'symbol': 'CC', 'category': 'commodity'},
+        # 外汇
+        'EURUSD=X': {'name': '欧元/美元', 'symbol': 'EURUSD', 'category': 'forex'},
+        'USDJPY=X': {'name': '美元/日元', 'symbol': 'USDJPY', 'category': 'forex'},
+        'GBPUSD=X': {'name': '英镑/美元', 'symbol': 'GBPUSD', 'category': 'forex'},
         'CNY=X': {'name': '美元/人民币', 'symbol': 'CNY', 'category': 'forex'},
+        'CNH=F': {'name': '美元/离岸人民币', 'symbol': 'CNH', 'category': 'forex'},
         'DX-Y.NYB': {'name': '美元指数', 'symbol': 'DXY', 'category': 'forex'},
         # 港股
         '^HSI': {'name': '恒生指数', 'symbol': 'HSI', 'category': 'hk_index'},
+        '^HSTECH': {'name': '恒生科技指数', 'symbol': 'HSTECH', 'category': 'hk_index'},
     }
     
     def __init__(self):
@@ -114,11 +131,11 @@ class InternationalMarketFetcher:
         lines.append("")
         
         # 美股三大指数
-        lines.append("### 美股三大指数")
+        lines.append("### 美股指数")
         lines.append("")
         lines.append("| 指数 | 最新价 | 涨跌幅 | 近5天 | 近30天 |")
         lines.append("|------|--------|--------|-------|--------|")
-        for key in ['^DJI', '^GSPC', '^IXIC']:
+        for key in ['^DJI', '^GSPC', '^IXIC', '^RUT']:
             if key in data:
                 d = data[key]
                 lines.append(f"| {d['name']} | {d['price']:,.2f} | {d['change_pct']:+.2f}% | {d['return_5d']:+.2f}% | {d['return_30d']:+.2f}% |")
@@ -135,10 +152,10 @@ class InternationalMarketFetcher:
         lines.append("")
         lines.append("| 品种 | 最新价 | 涨跌幅 | 近5天 | 近30天 |")
         lines.append("|------|--------|--------|-------|--------|")
-        for key in ['CL=F', 'GC=F', 'HG=F']:
+        for key in ['CL=F', 'BZ=F', 'GC=F', 'SI=F', 'HG=F', 'NG=F']:
             if key in data:
                 d = data[key]
-                unit = "美元/桶" if key == 'CL=F' else "美元/盎司" if key == 'GC=F' else "美元/磅"
+                unit = "美元/桶" if key in ['CL=F', 'BZ=F'] else "美元/盎司" if key == 'GC=F' else "美元/盎司" if key == 'SI=F' else "美元/磅" if key == 'HG=F' else "美元/百万英热"
                 lines.append(f"| {d['name']} | {d['price']:.2f}{unit} | {d['change_pct']:+.2f}% | {d['return_5d']:+.2f}% | {d['return_30d']:+.2f}% |")
         lines.append("")
         
@@ -147,7 +164,7 @@ class InternationalMarketFetcher:
         lines.append("")
         lines.append("| 品种 | 最新价 | 涨跌幅 | 近30天 |")
         lines.append("|------|--------|--------|--------|")
-        for key in ['DX-Y.NYB', 'CNY=X']:
+        for key in ['DX-Y.NYB', 'CNY=X', 'CNH=F', 'EURUSD=X', 'USDJPY=X', 'GBPUSD=X']:
             if key in data:
                 d = data[key]
                 note = f" ({d.get('note', '')})" if d.get('note') else ''
@@ -155,12 +172,12 @@ class InternationalMarketFetcher:
         lines.append("")
         
         # 港股
-        if '^HSI' in data:
-            h = data['^HSI']
-            lines.append("### 香港市场")
-            lines.append("")
-            lines.append(f"**恒生指数**: {h['price']:,.2f} ({h['change_pct']:+.2f}%), 近30天 {h['return_30d']:+.2f}%  ")
-        
+        lines.append("### 香港市场")
+        lines.append("")
+        for key in ['^HSI', '^HSTECH']:
+            if key in data:
+                h = data[key]
+                lines.append(f"**{h['name']}**: {h['price']:,.2f} ({h['change_pct']:+.2f}%), 近30天 {h['return_30d']:+.2f}%  ")
         lines.append("")
         lines.append("---")
         
@@ -175,7 +192,7 @@ class InternationalMarketFetcher:
         insights = []
         
         # 美股影响
-        for key, name in [('^DJI', '道指'), ('^GSPC', '标普'), ('^IXIC', '纳指')]:
+        for key, name in [('^DJI', '道指'), ('^GSPC', '标普'), ('^IXIC', '纳指'), ('^RUT', '罗素2000')]:
             if key in data:
                 change = data[key]['change_pct']
                 emoji = "📈" if change > 0 else "📉"
@@ -198,6 +215,9 @@ class InternationalMarketFetcher:
         if 'CL=F' in data:
             oil = data['CL=F']
             commodity_notes.append(f"原油{oil['change_pct']:+.2f}%")
+        if 'SI=F' in data:
+            ag = data['SI=F']
+            commodity_notes.append(f"银价{ag['change_pct']:+.2f}%")
         if commodity_notes:
             insights.append(f"🛢️ 商品: {' | '.join(commodity_notes)}")
         

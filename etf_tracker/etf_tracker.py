@@ -362,7 +362,9 @@ class ETFDataFetcher:
     def __init__(self, config: Config = None):
         self.config = config or Config()
         self._dsm = None
+        self._cache = None
         self._init_dsm()
+        self._init_cache()
     
     def _init_dsm(self):
         """初始化统一数据源管理器"""
@@ -373,6 +375,39 @@ class ETFDataFetcher:
             except Exception as e:
                 print(f"  [ETFDataFetcher] 统一数据源管理器初始化失败: {e}，使用传统方式")
                 self._dsm = None
+    
+    def _init_cache(self):
+        """初始化本地缓存"""
+        try:
+            from data_cache import DataCache
+            self._cache = DataCache()
+            stats = self._cache.get_cache_stats()
+            print(f"  [ETFDataFetcher] 本地缓存初始化成功: {stats['files']} 文件, {stats['size_mb']} MB")
+        except Exception as e:
+            print(f"  [ETFDataFetcher] 本地缓存初始化失败: {e}")
+            self._cache = None
+    
+    def _get_cached_data(self, code: str, data_type: str, days: int) -> Optional[pd.DataFrame]:
+        """尝试从缓存获取数据"""
+        if self._cache is None:
+            return None
+        try:
+            # 每天收盘后拉取一次即可，缓存 1 天
+            df = self._cache.get_cache(code, data_type=data_type, max_age_days=1)
+            if df is not None and len(df) >= days * 0.8:
+                return df
+            return None
+        except Exception:
+            return None
+    
+    def _save_cached_data(self, code: str, df: pd.DataFrame, data_type: str, source: str):
+        """保存数据到缓存"""
+        if self._cache is None or df is None:
+            return
+        try:
+            self._cache.save_cache(code, df, data_type=data_type, source=source)
+        except Exception as e:
+            print(f"  [ETFDataFetcher] 缓存保存失败: {e}")
     
     @staticmethod
     def get_kline_data_from_akshare(etf_code: str, days: int = 120) -> pd.DataFrame:
@@ -444,9 +479,14 @@ class ETFDataFetcher:
                     raise e
     
     def get_kline_data(self, etf_code: str, days: int = 120) -> pd.DataFrame:
-        """获取 ETF K线数据 - 优先使用统一数据源管理器，支持美股"""
+        """获取 ETF K线数据 - 优先使用缓存，其次统一数据源管理器，支持美股"""
         
-        # 美股代码直接走 Yahoo Finance
+        # 1. 先查本地缓存
+        cached = self._get_cached_data(etf_code, "kline", days)
+        if cached is not None:
+            return cached
+        
+        # 2. 美股代码直接走 Yahoo Finance
         if etf_code.isalpha() or (len(etf_code) <= 5 and etf_code.isupper()):
             if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
                 try:
@@ -465,46 +505,55 @@ class ETFDataFetcher:
                     df = df.sort_values('date').reset_index(drop=True)
                     if len(df) > days:
                         df = df.tail(days).reset_index(drop=True)
+                    self._save_cached_data(etf_code, df, "kline", "yfinance")
                     print(f"  Yahoo Finance 美股数据获取成功: {len(df)} 条")
                     return df
                 except Exception as e:
                     print(f"  Yahoo Finance 美股获取失败: {e}")
         
-        # 1. 优先使用统一数据源管理器
+        # 3. 优先使用统一数据源管理器
         if self._dsm is not None:
             try:
                 print(f"  [ETFDataFetcher] 使用统一数据源管理器获取 {etf_code} 数据...")
                 df = self._dsm.get_etf_kline(etf_code, days)
                 print(f"  [ETFDataFetcher] 统一数据源管理器获取成功: {len(df)} 条")
+                self._save_cached_data(etf_code, df, "kline", "dsm")
                 return df
             except Exception as e:
                 print(f"  [ETFDataFetcher] 统一数据源管理器获取失败: {e}")
         
-        # 2. 传统方式: 优先使用 AkShare
+        # 4. 传统方式: 优先使用 AkShare
         if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE:
             try:
                 df = ETFDataFetcher.get_kline_data_from_akshare(etf_code, days)
+                self._save_cached_data(etf_code, df, "kline", "akshare")
                 return df
             except Exception as e:
                 print(f"  AkShare 获取失败: {e}")
         
-        # 3. 备用: 东方财富 API
+        # 5. 备用: 东方财富 API
         try:
             print(f"  正在从东方财富获取 {etf_code} 数据...")
             secid = f"1.{etf_code}"
             df = ETFDataFetcher.get_kline_data_eastmoney(secid, days)
             print(f"  东方财富数据获取成功: {len(df)} 条")
+            self._save_cached_data(etf_code, df, "kline", "eastmoney")
             return df
         except Exception as e:
             print(f"  东方财富获取失败: {e}")
         
-        # 4. 所有数据源失败
+        # 6. 所有数据源失败
         raise FileNotFoundError(f"所有数据源均失败，请检查网络连接或手动提供数据")
     
     def get_stock_kline_data(self, stock_code: str, days: int = 120) -> pd.DataFrame:
-        """获取个股 K线数据 - 使用统一数据源管理器，支持港股/美股"""
+        """获取个股 K线数据 - 优先使用缓存，支持港股/美股"""
         
-        # 美股代码直接走 Yahoo Finance
+        # 1. 先查本地缓存
+        cached = self._get_cached_data(stock_code, "stock", days)
+        if cached is not None:
+            return cached
+        
+        # 2. 美股代码直接走 Yahoo Finance
         if stock_code.isalpha() or (len(stock_code) <= 5 and stock_code.isupper()) or '-' in stock_code:
             if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
                 try:
@@ -523,12 +572,13 @@ class ETFDataFetcher:
                     df = df.sort_values('date').reset_index(drop=True)
                     if len(df) > days:
                         df = df.tail(days).reset_index(drop=True)
+                    self._save_cached_data(stock_code, df, "stock", "yfinance")
                     print(f"  Yahoo Finance 美股个股数据获取成功: {len(df)} 条")
                     return df
                 except Exception as e:
                     print(f"  Yahoo Finance 美股个股获取失败: {e}")
         
-        # 港股代码使用 Yahoo Finance
+        # 3. 港股代码使用 Yahoo Finance
         if stock_code.endswith('.HK'):
             if 'YFINANCE_AVAILABLE' in globals() and YFINANCE_AVAILABLE:
                 try:
@@ -556,22 +606,24 @@ class ETFDataFetcher:
                     df = df.sort_values('date').reset_index(drop=True)
                     if len(df) > days:
                         df = df.tail(days).reset_index(drop=True)
+                    self._save_cached_data(stock_code, df, "stock", "yfinance")
                     print(f"  Yahoo Finance 港股数据获取成功: {len(df)} 条")
                     return df
                 except Exception as e:
                     print(f"  Yahoo Finance 港股获取失败: {e}")
         
-        # 1. 优先使用统一数据源管理器
+        # 4. 优先使用统一数据源管理器
         if self._dsm is not None:
             try:
                 print(f"  [ETFDataFetcher] 使用统一数据源管理器获取 {stock_code} 数据...")
                 df = self._dsm.get_stock_kline(stock_code, days)
                 print(f"  [ETFDataFetcher] 统一数据源管理器获取成功: {len(df)} 条")
+                self._save_cached_data(stock_code, df, "stock", "dsm")
                 return df
             except Exception as e:
                 print(f"  [ETFDataFetcher] 统一数据源管理器获取失败: {e}")
         
-        # 2. 传统方式: 使用 AkShare
+        # 5. 传统方式: 使用 AkShare
         if 'AKSHARE_AVAILABLE' in globals() and AKSHARE_AVAILABLE and not stock_code.endswith('.HK'):
             try:
                 import akshare as ak
@@ -593,6 +645,7 @@ class ETFDataFetcher:
                 if len(df) > days:
                     df = df.tail(days).reset_index(drop=True)
                 
+                self._save_cached_data(stock_code, df, "stock", "akshare")
                 print(f"  AkShare 个股数据获取成功: {len(df)} 条")
                 return df
             except Exception as e:
@@ -984,12 +1037,21 @@ class SignalGenerator:
 class ReportGenerator:
     """投资规划报告生成器"""
     
-    def __init__(self, config: Config):
-        self.config = config
-        self.etf_code = config.etf_code
-        self.etf_name = config.etf_name
-        self.report_title = config.report_title
+    def __init__(self, config: Config = None):
+        self.config = config or Config()
+        self.etf_code = self.config.etf_code or self.config.default_etf
+        self.etf_name = self.config.etf_name
         self.date = datetime.now().strftime('%Y-%m-%d')
+        self.report_title = self.config.report_title
+    
+    def _generate_alerts_section(self, alerts) -> str:
+        """生成实时预警报告章节"""
+        if not alerts:
+            return ""
+        
+        from alert_engine import AlertEngine
+        engine = AlertEngine()
+        return "\n" + engine.generate_markdown_report(alerts) + "\n"
     
     def generate_report(self, backtest_results: List[Dict], signals: Dict, 
                        position: Dict, df: pd.DataFrame, 
@@ -1280,7 +1342,8 @@ class ReportGenerator:
                                    top_stocks_by_sector: Dict[str, List[Dict]] = None,
                                    report_date: str = None,
                                    international_summary: str = "",
-                                   international_analysis: str = "") -> str:
+                                   international_analysis: str = "",
+                                   alerts: List = None) -> str:
         """生成多板块 ETF 综合投资报告"""
         date = report_date or datetime.now().strftime('%Y-%m-%d')
         
@@ -1389,6 +1452,10 @@ class ReportGenerator:
                 pred_text = f", 1日预测 {row['1日预测']:+.2f}%" if row['预测置信度'] > 0 else ""
                 report += f"- **{row['板块']}** ({row['主题']}): 60天收益 {row['60天收益']:+.2f}%, 评分 {row['综合评分']:.1f}{pred_text}\n"
         
+        # 实时预警
+        if alerts:
+            report += self._generate_alerts_section(alerts)
+        
         # 国际市场板块
         if international_summary or international_analysis:
             report += """
@@ -1432,6 +1499,10 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     """
     生成多板块 ETF 每日综合报告
     """
+    import time
+    start_time = time.time()
+    timing = {}
+    
     config = config or Config()
     report_date = datetime.now().strftime('%Y-%m-%d')
     
@@ -1443,20 +1514,28 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     
     analyzer = MultiETFAnalyzer(config)
     
-    # 1. 快速扫描所有 ETF
+    def _log_timing(step: str, t: float):
+        timing[step] = round(t, 2)
+        print(f"  [计时] {step}: {timing[step]:.2f}s")
+    
+    # 1. 快速扫描所有 ETF（并行 + 容错）
     print("\n【1/4】快速扫描所有 ETF...")
-    quick_results = []
-    for etf in config.etfs:
+    t0 = time.time()
+    
+    def scan_single_etf(etf):
+        """扫描单个 ETF 的辅助函数"""
         try:
             df = analyzer.fetcher.get_kline_data(etf['code'], days=400)
             if df is None or len(df) < 30:
-                continue
+                return None
             engine = BacktestEngine(df)
             backtest = engine.run_all_backtests(config.backtest_periods)
             signal_gen = SignalGenerator(backtest, df)
             signals = signal_gen.generate_signals()
             position = signal_gen.calculate_position_sizing()
-            quick_results.append({
+            bt60 = next((b for b in backtest if b['period_days'] == 60), {})
+            print(f"  {etf['name']}: 60天{bt60.get('total_return', 0):+.2f}% 评分{signals['score']:.1f}")
+            return {
                 'code': etf['code'],
                 'name': etf['name'],
                 'theme': etf.get('theme', '-'),
@@ -1467,21 +1546,33 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
                 'position': position,
                 'df': df,
                 'etf_config': etf
-            })
-            bt60 = next((b for b in backtest if b['period_days'] == 60), {})
-            print(f"  {etf['name']}: 60天{bt60.get('total_return', 0):+.2f}% 评分{signals['score']:.1f}")
+            }
         except Exception as e:
             print(f"  {etf['name']} 扫描失败: {e}")
+            return None
+    
+    # 使用线程池并行扫描（IO 密集型适合多线程）
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    quick_results = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(scan_single_etf, etf): etf for etf in config.etfs}
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                quick_results.append(result)
     
     if not quick_results:
         print("⚠️ 没有 ETF 扫描成功，退出")
         return ""
+    
+    _log_timing("1.快速扫描", time.time() - t0)
     
     # 2. 排序并选择前 N 做深度分析
     quick_results.sort(key=lambda x: x['signals']['score'], reverse=True)
     top_etfs = quick_results[:deep_analysis_top_n]
     
     print(f"\n【2/4】对前 {len(top_etfs)} 名 ETF 进行多模型深度预测...")
+    t1 = time.time()
     top_etfs_detail = []
     for r in top_etfs:
         try:
@@ -1500,10 +1591,13 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
             print(f"  {r['name']} 深度预测失败: {e}")
             top_etfs_detail.append(r)
     
+    _log_timing("2.多模型预测", time.time() - t1)
+    
     # 3. 分析重点 ETF 的 Top10 成分股
     top_stocks_by_sector = {}
     if analyze_top_stocks:
         print(f"\n【3/4】分析重点 ETF 的 Top10 成分股...")
+        t2 = time.time()
         for r in top_etfs_detail:
             try:
                 etf_config = r['etf_config']
@@ -1513,9 +1607,39 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
                     print(f"  {r['name']}: 分析了 {len(stocks)} 只成分股")
             except Exception as e:
                 print(f"  {r['name']} 成分股分析失败: {e}")
+        _log_timing("3.成分股分析", time.time() - t2)
     
-    # 4. 生成板块排名
-    print("\n【4/4】生成板块排名和综合报告...")
+    # 4. 实时预警分析
+    print("\n【4/5】实时预警分析...")
+    t3 = time.time()
+    alerts = []
+    try:
+        from alert_engine import AlertEngine
+        alert_engine = AlertEngine()
+        for r in quick_results:
+            try:
+                etf_alerts = alert_engine.analyze(r['code'], r['name'], r['df'])
+                alerts.extend(etf_alerts)
+            except Exception as e:
+                print(f"  {r['name']} 预警分析失败: {e}")
+        if alerts:
+            print(f"  发现 {len(alerts)} 条预警信号")
+            # 持久化预警
+            try:
+                from data_persistence import DataPersistence
+                dp = DataPersistence()
+                dp.save_alerts([a.to_dict() for a in alerts])
+            except Exception as e:
+                print(f"  预警持久化失败: {e}")
+        else:
+            print("  今日无异常预警信号")
+    except Exception as e:
+        print(f"  预警模块加载失败: {e}")
+    _log_timing("4.实时预警", time.time() - t3)
+    
+    # 5. 生成板块排名
+    print("\n【5/5】生成板块排名和综合报告...")
+    t4 = time.time()
     analyzer.results = quick_results
     sector_ranking = analyzer.get_sector_ranking()
     
@@ -1542,8 +1666,10 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         top_stocks_by_sector=top_stocks_by_sector,
         report_date=report_date,
         international_summary=international_summary,
-        international_analysis=international_analysis
+        international_analysis=international_analysis,
+        alerts=alerts
     )
+    _log_timing("5.报告生成", time.time() - t4)
     
     # 保存报告
     report_path = f"/home/zhihu/etf_tracker/reports/multi_etf_report_{report_date}.md"
@@ -1553,6 +1679,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     print(f"\n报告已保存: {report_path}")
     
     # 5. 微信推送
+    t4 = time.time()
     if enable_wechat_push and config.features.get('wechat_push', True):
         try:
             from hermes_wechat_pusher import HermesWeChatPusher
@@ -1562,9 +1689,15 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
             print("微信推送已发送")
         except Exception as e:
             print(f"微信推送失败: {e}")
+    _log_timing("5.微信推送", time.time() - t4)
+    
+    total_time = time.time() - start_time
+    _log_timing("总耗时", total_time)
     
     print("\n" + "=" * 70)
     print("多板块 ETF 综合报告生成完成!")
+    print(f"总耗时: {total_time:.2f}s")
+    print(f"各阶段耗时: {timing}")
     print("=" * 70)
     
     return report_path
