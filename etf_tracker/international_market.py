@@ -46,59 +46,104 @@ class InternationalMarketFetcher:
         'DX-Y.NYB': {'name': '美元指数', 'symbol': 'DXY', 'category': 'forex'},
         # 港股
         '^HSI': {'name': '恒生指数', 'symbol': 'HSI', 'category': 'hk_index'},
-        '^HSTECH': {'name': '恒生科技指数', 'symbol': 'HSTECH', 'category': 'hk_index'},
+        '513180': {'name': '恒生科技ETF华夏', 'symbol': 'HSTECH', 'category': 'hk_index'},
     }
     
     def __init__(self):
         self._cache = {}
         self._cache_time = None
     
+    def _fetch_yf(self, ticker_key: str, days: int) -> Optional[pd.DataFrame]:
+        """使用 yfinance 获取数据"""
+        import yfinance as yf
+        ticker = yf.Ticker(ticker_key)
+        return ticker.history(period=f"{days * 2}d")
+    
+    def _fetch_tickflow(self, code: str, days: int) -> Optional[pd.DataFrame]:
+        """使用 TickFlow 获取 A股/ETF 数据"""
+        try:
+            from data_source_manager import DataSourceManager
+            import os, json
+            # 优先使用环境变量或配置文件中的 key
+            cfg_path = os.path.join(os.path.dirname(__file__), 'config.json')
+            cfg = {}
+            if os.path.exists(cfg_path):
+                with open(cfg_path, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f) or {}
+            dsm = DataSourceManager(config_dict=cfg)
+            return dsm.get_etf_kline(code, days=days)
+        except Exception:
+            return None
+    
+    def _normalize_df(self, df: pd.DataFrame, source: str) -> pd.DataFrame:
+        """标准化为统一列名"""
+        df = df.copy()
+        if source == 'yf':
+            df = df.reset_index()
+            df = df.rename(columns={
+                'Date': 'date', 'Open': 'open', 'Close': 'close',
+                'High': 'high', 'Low': 'low', 'Volume': 'volume'
+            })
+            df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
+        df = df.sort_values('date').reset_index(drop=True)
+        return df
+    
     def fetch_all(self, days: int = 30) -> Dict[str, Dict]:
         """获取所有国际市场数据"""
         results = {}
         failures = []
-        
-        import yfinance as yf
         
         # 批量获取以提高效率 - 分组按category
         for category in ['us_index', 'risk', 'commodity', 'forex', 'hk_index']:
             cat_tickers = {k: v for k, v in self.TICKERS.items() if v['category'] == category}
             for ticker_key, info in cat_tickers.items():
                 try:
-                    ticker = yf.Ticker(ticker_key)
-                    df = ticker.history(period=f"{days * 2}d")
+                    # A股/ETF 代码优先走 TickFlow
+                    if ticker_key.isdigit() or (len(ticker_key) == 6 and ticker_key.isdigit()):
+                        df = self._fetch_tickflow(ticker_key, days)
+                        source = 'tf'
+                    else:
+                        df = None
+                        source = 'yf'
+                    
+                    # TickFlow 失败降级到 yfinance
+                    if df is None or len(df) == 0:
+                        df = self._fetch_yf(ticker_key, days)
+                        source = 'yf'
                     
                     if df is None or len(df) == 0:
                         failures.append(f"{info['name']}({ticker_key}): 空数据")
                         continue
                     
+                    df = self._normalize_df(df, source)
+                    
                     latest = df.iloc[-1]
                     prev = df.iloc[-2] if len(df) >= 2 else latest
                     
                     # 计算涨跌幅
-                    change_pct = ((latest['Close'] - prev['Close']) / prev['Close']) * 100
+                    change_pct = ((latest['close'] - prev['close']) / prev['close']) * 100
                     
                     # 获取近30天收益
                     first_30 = df.iloc[-min(22, len(df))]
-                    return_30d = ((latest['Close'] - first_30['Close']) / first_30['Close']) * 100
+                    return_30d = ((latest['close'] - first_30['close']) / first_30['close']) * 100
                     
                     # 近5天收益(周)
                     first_5 = df.iloc[-min(5, len(df))]
-                    return_5d = ((latest['Close'] - first_5['Close']) / first_5['Close']) * 100
+                    return_5d = ((latest['close'] - first_5['close']) / first_5['close']) * 100
                     
                     result = {
                         'name': info['name'],
                         'symbol': info['symbol'],
                         'category': info['category'],
-                        'price': round(float(latest['Close']), 2),
-                        'open': round(float(latest['Open']), 2),
-                        'high': round(float(latest['High']), 2),
-                        'low': round(float(latest['Low']), 2),
+                        'price': round(float(latest['close']), 2),
+                        'open': round(float(latest['open']), 2),
+                        'high': round(float(latest['high']), 2),
+                        'low': round(float(latest['low']), 2),
                         'change_pct': round(float(change_pct), 2),
                         'return_5d': round(float(return_5d), 2),
                         'return_30d': round(float(return_30d), 2),
-                        'volume': int(latest['Volume']),
-                        'latest_date': str(df.index[-1].strftime('%Y-%m-%d') if hasattr(df.index[-1], 'strftime') else df.index[-1]),
+                        'volume': int(latest['volume']),
+                        'latest_date': str(latest['date'].strftime('%Y-%m-%d') if hasattr(latest['date'], 'strftime') else latest['date']),
                     }
                     
                     # 特殊处理 VIX
