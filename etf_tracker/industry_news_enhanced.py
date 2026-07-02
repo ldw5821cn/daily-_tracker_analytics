@@ -88,8 +88,12 @@ class NewsFetcher:
     
     @staticmethod
     def get_news_from_sina(keyword: str, days: int = 3) -> List[Dict]:
-        """从新浪财经获取新闻"""
+        """从新浪财经获取新闻（修复：绕过代理）"""
         try:
+            import urllib.request
+            # 修复：临时移除代理，避免容器内 https_proxy 拦截新浪
+            old_proxy = os.environ.pop('https_proxy', None)
+            
             # 使用新浪财经搜索API
             url = f"https://search.api.sina.com.cn/?q={urllib.parse.quote(keyword)}&c=news&sort=time&page=1&num=20"
             req = urllib.request.Request(url, headers={
@@ -98,6 +102,10 @@ class NewsFetcher:
             })
             resp = urllib.request.urlopen(req, timeout=15)
             data = json.loads(resp.read().decode('utf-8'))
+            
+            # 恢复代理
+            if old_proxy is not None:
+                os.environ['https_proxy'] = old_proxy
             
             news_list = []
             if 'result' in data and 'list' in data['result']:
@@ -113,30 +121,46 @@ class NewsFetcher:
             return news_list
         except Exception as e:
             print(f"  新浪财经新闻获取失败: {e}")
+            # 恢复代理
+            if old_proxy is not None:
+                os.environ['https_proxy'] = old_proxy
             return []
     
     @staticmethod
     def get_news_from_eastmoney(keyword: str, days: int = 3) -> List[Dict]:
-        """从东方财富获取新闻"""
+        """从东方财富获取新闻（使用稳定 API）"""
         try:
-            # 东方财富新闻搜索
-            url = f"https://searchapi.eastmoney.com/api/suggest/get?input={urllib.parse.quote(keyword)}&type=14&count=20"
+            import urllib.request
+            # 东方财富新闻搜索 - 使用更稳定的搜索API
+            url = f"https://search-api-web.eastmoney.com/search/jsonp?cb=jQuery&param=%7B%22uid%22%3A%22%22%2C%22keyword%22%3A%22{urllib.parse.quote(keyword)}%22%2C%22type%22%3A%5B%22cms%22%5D%2C%22client%22%3A%22web%22%2C%22clientType%22%3A%22web%22%2C%22clientVersion%22%3A%22curr%22%2C%22param%22%3A%7B%22cms%22%3A%7B%22searchScope%22%3A%22default%22%2C%22sort%22%3A%22default%22%2C%22pageIndex%22%3A1%2C%22pageSize%22%3A10%2C%22preTag%22%3A%22%22%2C%22postTag%22%3A%22%22%7D%7D%7D"
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'https://www.eastmoney.com/'
             })
             resp = urllib.request.urlopen(req, timeout=15)
-            data = json.loads(resp.read().decode('utf-8'))
+            text = resp.read().decode('utf-8')
+            
+            # 提取 JSON 从 jsonp 响应
+            import re
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            if not json_match:
+                return []
+            data = json.loads(json_match.group())
             
             news_list = []
-            if 'QuotationCodeTable' in data and 'Data' in data['QuotationCodeTable']:
-                for item in data['QuotationCodeTable']['Data']:
+            articles = data.get('article', []) or data.get('list', []) or data.get('result', [])
+            if isinstance(articles, list):
+                for item in articles:
+                    title = item.get('title', '') or item.get('original_title', '') or item.get('art_title', '')
+                    content = item.get('content', '') or item.get('summary', '') or item.get('art_content', '')
+                    if not title:
+                        continue
                     news_list.append({
-                        "title": item.get('Name', ''),
-                        "url": f"https://finance.eastmoney.com/a/{item.get('Code', '')}.html",
+                        "title": title,
+                        "url": item.get('url', '') or item.get('art_url', ''),
                         "source": "东方财富",
-                        "time": item.get('Time', ''),
-                        "summary": ""
+                        "time": str(item.get('date', '') or item.get('art_date', '') or item.get('showDate', '')),
+                        "summary": content[:200] if content else ""
                     })
             
             return news_list
