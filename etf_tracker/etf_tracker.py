@@ -1648,7 +1648,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         research_summary=research_summary
     )
     
-    # 6. LLM 智能决策报告增强
+    # 6. LLM 智能决策报告 + 择时信号
     if LLM_REPORT_AVAILABLE and config.features.get('llm_report', True) and config.config.get('llm_report', {}).get('enabled', True):
         try:
             print("\n【6/6】生成 LLM 智能决策报告...")
@@ -1665,6 +1665,15 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
                 news_data=news_data,
                 research_summary=research_summary
             )
+            # 追加择时信号汇总表（在 LLM 报告之后）
+            from signal_summary import SignalAggregator, format_signal_table
+            signal_section = "\n\n---\n\n# 五维择时信号\n\n"
+            for r in top_etfs_detail[:5]:
+                signal_result = SignalAggregator.aggregate(r, news_data)
+                signal_section += f"### {r['name']} ({r['code']})\n\n"
+                signal_section += format_signal_table(signal_result)
+                signal_section += "\n"
+            report += signal_section
             _log_timing("6.LLM决策报告", time.time() - t_llm)
         except Exception as e:
             print(f"  LLM 报告生成失败: {e}")
@@ -1775,6 +1784,28 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
                     })
         # 验证历史预测
         history_tracker.validate_all_pending_predictions()
+        # 保存板块排名（行业轮动历史）
+        if sector_ranking is not None and not sector_ranking.empty:
+            history_tracker.save_sector_ranking(sector_ranking, report_date)
+        # 获取板块轮动分析并追加到报告
+        try:
+            rotation = history_tracker.get_sector_rotation_analysis(days_lookback=7)
+            if rotation:
+                rotation_lines = ["\n\n---\n\n# 行业轮动速度\n\n",
+                                  "| 板块 | 当前排名 | 排名变化 | 轮动速度 | 60天收益 |\n",
+                                  "|------|----------|----------|----------|----------|\n"]
+                # 按轮动速度排序（上升最快的在前）
+                sorted_sectors = sorted(rotation.items(), key=lambda x: x[1]['rank_change'], reverse=True)
+                for sector, data in sorted_sectors:
+                    emoji = "🔺" if data['direction'] == '上升' else "🔻" if data['direction'] == '下降' else "➖"
+                    rotation_lines.append(f"| {emoji} {sector} | #{data['current_rank']} | {data['rank_change']:+d} | {data['rotation_speed']:+.2f}/天 | {data['return_60d']:+.2f}% |\n")
+                rotation_text = "".join(rotation_lines)
+                # 追加到报告
+                with open(report_path, 'a', encoding='utf-8') as f:
+                    f.write(rotation_text)
+                print("  行业轮动分析已追加")
+        except Exception as e:
+            print(f"  行业轮动分析失败: {e}")
         print("  分析历史已持久化")
     except Exception as e:
         print(f"  历史持久化失败: {e}")

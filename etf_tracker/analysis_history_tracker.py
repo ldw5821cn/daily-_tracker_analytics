@@ -98,7 +98,7 @@ class AnalysisHistoryTracker:
             )
         ''')
         
-        # 4. 每日报告元数据表
+        # 5. 每日报告元数据表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS daily_report_meta (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,6 +111,23 @@ class AnalysisHistoryTracker:
                 llm_report_enabled INTEGER DEFAULT 0,
                 llm_report_length INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # 6. 板块轮动历史表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sector_rotation (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sector TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,
+                rank INTEGER,
+                score REAL,
+                return_30d REAL,
+                return_60d REAL,
+                return_90d REAL,
+                signal TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(sector, snapshot_date)
             )
         ''')
         
@@ -434,6 +451,83 @@ class AnalysisHistoryTracker:
         report += "- 预测基于 LightGBM/XGBoost/RandomForest/ARIMA/LSTM 五模型融合\n"
         
         return report
+    
+    # ---------------- 行业轮动 ----------------
+    
+    def save_sector_ranking(self, sector_ranking, snapshot_date: str):
+        """保存每日板块排名"""
+        if sector_ranking is None or sector_ranking.empty:
+            return
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        for idx, row in sector_ranking.iterrows():
+            cursor.execute('''
+                REPLACE INTO sector_rotation
+                (sector, snapshot_date, rank, score, return_30d, return_60d, return_90d, signal)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                row.get('板块', f'sector_{idx}'),
+                snapshot_date,
+                int(idx) + 1,
+                float(row.get('综合评分', 0) or 0),
+                float(row.get('30天收益', 0) or 0) if '30天收益' in row else None,
+                float(row.get('60天收益', 0) or 0),
+                float(row.get('90天收益', 0) or 0) if '90天收益' in row else None,
+                str(row.get('信号', ''))
+            ))
+        conn.commit()
+        conn.close()
+    
+    def get_sector_rotation_analysis(self, days_lookback: int = 14) -> Dict:
+        """分析板块轮动速度
+        返回每个板块的排名变化趋势
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # 获取最近 N 天的所有板块排名历史
+        cursor.execute('''
+            SELECT sector, snapshot_date, rank, score, return_60d
+            FROM sector_rotation
+            WHERE snapshot_date >= date('now', '-{} days')
+            ORDER BY snapshot_date, rank
+        '''.format(days_lookback))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return {}
+        
+        df = pd.DataFrame(rows, columns=['sector', 'date', 'rank', 'score', 'return_60d'])
+        
+        results = {}
+        for sector in df['sector'].unique():
+            sdf = df[df['sector'] == sector].sort_values('date')
+            if len(sdf) < 2:
+                continue
+            
+            first = sdf.iloc[0]
+            last = sdf.iloc[-1]
+            rank_change = first['rank'] - last['rank']  # 负=排名上升，正=排名下降
+            score_change = (last['score'] or 0) - (first['score'] or 0)
+            
+            # 轮动速度 = 排名变化 / 天数
+            days_span = max((pd.to_datetime(last['date']) - pd.to_datetime(first['date'])).days, 1)
+            rotation_speed = rank_change / days_span
+            
+            results[sector] = {
+                "current_rank": int(last['rank']),
+                "previous_rank": int(first['rank']),
+                "rank_change": int(rank_change),
+                "score_change": round(score_change, 1),
+                "rotation_speed": round(rotation_speed, 2),
+                "direction": "上升" if rank_change > 0 else "下降" if rank_change < 0 else "持平",
+                "return_60d": round(last['return_60d'] * 100, 2) if last['return_60d'] else 0,
+                "data_points": len(sdf)
+            }
+        
+        return results
 
 
 if __name__ == "__main__":
