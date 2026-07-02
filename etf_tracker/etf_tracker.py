@@ -1813,7 +1813,32 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         traceback.print_exc()
     _log_timing("7.历史持久化", time.time() - t6)
     
-    # 8. 微信推送
+    # 8. 虚拟组合更新与绩效报告
+    t8 = time.time()
+    try:
+        from portfolio_tracker import PortfolioTracker
+        portfolio = PortfolioTracker(initial_cash=50000)
+        # 更新组合（按信号自动调仓）
+        pf_summary = portfolio.update(quick_results, report_date, sector_ranking)
+        if pf_summary:
+            print(f"  组合更新: 总值¥{pf_summary['total_value']:,.2f} 当日{pf_summary['daily_return']:+.2f}% 累计{pf_summary['cumulative_return']:+.2f}%")
+        # 追加组合概况到报告
+        pf_section = portfolio.generate_summary_section()
+        if pf_section:
+            with open(report_path, 'a', encoding='utf-8') as f:
+                f.write(pf_section)
+            print("  组合概况已追加到报告")
+        # 生成 quantstats HTML 报告
+        pf_html = portfolio.generate_performance_report()
+        if pf_html:
+            print(f"  📊 绩效报告: {pf_html}")
+    except Exception as e:
+        print(f"  组合更新失败: {e}")
+        import traceback
+        traceback.print_exc()
+    _log_timing("8.组合更新", time.time() - t8)
+    
+    # 9. 微信推送
     t7 = time.time()
     if enable_wechat_push and config.features.get('wechat_push', True):
         try:
