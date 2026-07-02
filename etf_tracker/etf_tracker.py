@@ -1673,33 +1673,23 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     
     _log_timing("5.报告生成", time.time() - t4)
     
-    # 保存报告（如果当天已有报告，自动归入日期文件夹）
+    # 保存报告（统一按日期文件夹组织）
     reports_dir = "/home/zhihu/etf_tracker/reports"
-    flat_path = f"{reports_dir}/multi_etf_report_{report_date}.md"
+    day_dir = f"{reports_dir}/{report_date}"
+    os.makedirs(day_dir, exist_ok=True)
     
-    if os.path.exists(flat_path):
-        # 当天已有报告 → 创建日期文件夹，所有报告归入
-        day_dir = f"{reports_dir}/{report_date}"
-        os.makedirs(day_dir, exist_ok=True)
-        # 把已有的 flat 文件移入文件夹（如果还没移过）
-        existing_in_folder = f"{day_dir}/multi_etf_report_1.md"
-        if not os.path.exists(existing_in_folder):
-            os.rename(flat_path, existing_in_folder)
-        # 确定新报告的序号
-        existing_nums = []
-        for f in os.listdir(day_dir):
-            if f.startswith("multi_etf_report_") and f.endswith(".md"):
-                try:
-                    num = int(f.replace("multi_etf_report_", "").replace(".md", ""))
-                    existing_nums.append(num)
-                except ValueError:
-                    pass
-        next_num = max(existing_nums) + 1 if existing_nums else 2
-        report_path = f"{day_dir}/multi_etf_report_{next_num}.md"
-    else:
-        report_path = flat_path
+    # 确定编号
+    existing = [f for f in os.listdir(day_dir) if f.startswith("multi_etf_report_") and f.endswith(".md")]
+    nums = []
+    for f in existing:
+        try:
+            n = int(f.replace("multi_etf_report_", "").replace(".md", ""))
+            nums.append(n)
+        except ValueError:
+            pass
+    seq = max(nums) + 1 if nums else 1
+    report_path = f"{day_dir}/multi_etf_report_{seq}.md"
     
-    os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(report)
     print(f"\n报告已保存: {report_path}")
@@ -1707,11 +1697,13 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     # 更新报告索引
     try:
         index_path = "/home/zhihu/etf_tracker/reports/REPORT_INDEX.md"
-        # 收集所有报告 - 包括根目录的 flat 文件和日期文件夹内的
+        # 从日期文件夹收集所有报告
         import glob
-        flat_reports = sorted(glob.glob("/home/zhihu/etf_tracker/reports/multi_etf_report_*.md"), reverse=True)
-        # 从日期文件夹收集
-        folder_reports = sorted(glob.glob("/home/zhihu/etf_tracker/reports/2026*/multi_etf_report_*.md"), reverse=True)
+        date_dirs = sorted(
+            [d for d in os.listdir("/home/zhihu/etf_tracker/reports") 
+             if os.path.isdir(f"/home/zhihu/etf_tracker/reports/{d}") and len(d) == 10],
+            reverse=True
+        )
         
         size_str = f"{os.path.getsize(report_path)/1024:.0f} KB"
         lines = [
@@ -1720,33 +1712,25 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
             "| 日期 | 报告 | 大小 |\n",
             "|------|------|------|\n",
         ]
-        # 先处理 flat 文件
-        current_date = None
-        for rp in flat_reports:
-            basename = os.path.basename(rp)
-            date_part = basename.replace("multi_etf_report_", "").replace(".md", "")
-            sz = f"{os.path.getsize(rp)/1024:.0f} KB"
-            if rp == report_path:
-                sz = size_str + " ← 最新"
-            lines.append(f"| {date_part} | [{basename}](./{basename}) | {sz} |\n")
-            current_date = date_part
-        # 再处理文件夹内的（按日期分组展示）
-        seen_folder_dates = set()
-        for rp in folder_reports:
-            rel = os.path.relpath(rp, "/home/zhihu/etf_tracker/reports")
-            date_dir = os.path.dirname(rel)
-            if date_dir in seen_folder_dates:
+        for date_dir in date_dirs:
+            day_path = f"/home/zhihu/etf_tracker/reports/{date_dir}"
+            files_in_folder = sorted(glob.glob(f"{day_path}/multi_etf_report_*.md"))
+            if not files_in_folder:
                 continue
-            seen_folder_dates.add(date_dir)
-            files_in_folder = sorted(glob.glob(f"/home/zhihu/etf_tracker/reports/{date_dir}/multi_etf_report_*.md"))
-            total_sz = sum(os.path.getsize(f) for f in files_in_folder) / 1024
-            links = [f"[{os.path.basename(f)}](./{date_dir}/{os.path.basename(f)})" for f in files_in_folder]
+            links = []
+            total_sz = 0
+            for f in files_in_folder:
+                sz = os.path.getsize(f) / 1024
+                total_sz += sz
+                basename = os.path.basename(f)
+                seq = basename.replace("multi_etf_report_", "").replace(".md", "")
+                links.append(f"[#{seq}](./{date_dir}/{basename})")
             sz_str = f"{total_sz:.0f} KB"
             if any(f == report_path for f in files_in_folder):
                 sz_str += " ← 最新"
             lines.append(f"| {date_dir} | {' + '.join(links)} | {sz_str} |\n")
         lines.append("\n---\n")
-        lines.append("*单日多份报告自动归入 `YYYY-MM-DD/` 文件夹*  \n")
+        lines.append("*报告统一存放在 `YYYY-MM-DD/` 日期文件夹中*  \n")
         with open(index_path, 'w', encoding='utf-8') as f:
             f.writelines(lines)
         print(f"  报告索引已更新: {index_path}")
