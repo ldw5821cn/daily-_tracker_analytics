@@ -1680,6 +1680,34 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
         f.write(report)
     print(f"\n报告已保存: {report_path}")
     
+    # 更新报告索引
+    try:
+        index_path = "/home/zhihu/etf_tracker/reports/REPORT_INDEX.md"
+        # 收集所有报告文件
+        import glob
+        all_reports = sorted(glob.glob("/home/zhihu/etf_tracker/reports/multi_etf_report_*.md"), reverse=True)
+        size_str = f"{os.path.getsize(report_path)/1024:.0f} KB"
+        lines = [
+            "# 多板块 ETF 每日投资分析 — 报告目录\n\n",
+            "> 自动生成，按日期倒序排列\n\n",
+            "| 日期 | 报告 | 大小 |\n",
+            "|------|------|------|\n",
+        ]
+        for rp in all_reports:
+            basename = os.path.basename(rp)
+            date_part = basename.replace("multi_etf_report_", "").replace(".md", "")
+            sz = f"{os.path.getsize(rp)/1024:.0f} KB" if os.path.exists(rp) else "-"
+            if rp == report_path:
+                sz = size_str + " ← 最新"
+            lines.append(f"| {date_part} | [{basename}](./{basename}) | {sz} |\n")
+        lines.append("\n---\n")
+        lines.append("*报告统一命名：`multi_etf_report_YYYY-MM-DD.md`*  \n")
+        with open(index_path, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+        print(f"  报告索引已更新: {index_path}")
+    except Exception as e:
+        print(f"  更新报告索引失败: {e}")
+    
     # 7. 历史持久化与回测验证
     t6 = time.time()
     try:
@@ -2001,7 +2029,7 @@ def main():
             # 保存完整的多模型预测报告
             try:
                 mm_report = AdvancedPredictionReport.generate_report(predictor, df_long, training_results, ensemble_result)
-                mm_report_path = f"/home/zhihu/etf_tracker/reports/multi_model_prediction_{datetime.now().strftime('%Y%m%d')}.md"
+                mm_report_path = f"/home/zhihu/etf_tracker/reports/multi_model_prediction_{datetime.now().strftime('%Y-%m-%d')}.md"
                 with open(mm_report_path, 'w', encoding='utf-8') as f:
                     f.write(mm_report)
                 print(f"  多模型预测报告已保存: {mm_report_path}")
@@ -2074,7 +2102,7 @@ def main():
     )
     
     # 9. 保存报告
-    report_path = f"/home/zhihu/etf_tracker/reports/report_{datetime.now().strftime('%Y%m%d')}.md"
+    report_path = f"/home/zhihu/etf_tracker/reports/report_{datetime.now().strftime('%Y-%m-%d')}.md"
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(report)
