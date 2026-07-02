@@ -74,7 +74,10 @@ class NewsFetcher:
     }
     
     # 数据源与上游/国际标签
-    NEWS_SOURCES = ["akshare", "sina", "eastmoney"]
+    NEWS_SOURCES = ["akshare", "sina", "eastmoney", "newsapi"]
+    
+    # NewsAPI 配置
+    NEWSAPI_BASE = "https://newsapi.org/v2/everything"
     
     # 关键股票/标的映射（用于后续关联ETF成分股）
     INDUSTRY_TICKERS = {
@@ -214,6 +217,55 @@ class NewsFetcher:
             return []
     
     @staticmethod
+    def get_news_from_newsapi(industry: str = "稀土永磁", days: int = 3) -> List[Dict]:
+        """从 NewsAPI 获取行业新闻（补充全球视角）"""
+        api_key = os.getenv("NEWSAPI_API_KEY", "")
+        if not api_key:
+            return []
+        
+        # NewsAPI 关键词映射（英文关键词，针对全球新闻）
+        NEWSAPI_KEYWORDS = {
+            "稀土永磁": "rare earth magnet",
+            "机器人": "humanoid robot OR industrial robot",
+            "人工智能": "AI OR artificial intelligence OR large language model",
+            "芯片制造": "semiconductor OR chip manufacturing OR foundry",
+            "存储行业": "HBM OR DRAM OR NAND flash memory",
+            "内存制造": "DRAM OR HBM memory chip",
+        }
+        query = NEWSAPI_KEYWORDS.get(industry, industry)
+        
+        try:
+            import urllib.request
+            import urllib.parse
+            url = f"{NewsFetcher.NEWSAPI_BASE}?q={urllib.parse.quote(query)}&language=en&sortBy=publishedAt&pageSize=10"
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'HermesETF/1.0',
+                'X-Api-Key': api_key
+            })
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = json.loads(resp.read().decode('utf-8'))
+            
+            news_list = []
+            for article in data.get('articles', []):
+                title = article.get('title', '')
+                if not title:
+                    continue
+                summary = article.get('description', '') or ''
+                news_list.append({
+                    "title": title,
+                    "url": article.get('url', ''),
+                    "source": f"NewsAPI/{article.get('source', {}).get('name', 'unknown')}",
+                    "time": article.get('publishedAt', '')[:10],
+                    "summary": summary[:200] if summary else "",
+                    "content_type": "global"
+                })
+            
+            return news_list
+        except Exception as e:
+            print(f"  NewsAPI 获取失败: {e}")
+            return []
+    
+    @staticmethod
     def get_all_industry_news(industries: Optional[List[str]] = None, days: int = 3,
                                max_news_per_source: int = 10) -> Dict[str, List[Dict]]:
         """获取所有行业新闻（多源聚合）"""
@@ -249,6 +301,11 @@ class NewsFetcher:
                 _dedup_add(NewsFetcher.get_news_from_eastmoney(industry, days), 'eastmoney')
             except Exception as e:
                 print(f"    eastmoney 获取失败: {e}")
+            # NewsAPI 作为第4源（英文全球视角）
+            try:
+                _dedup_add(NewsFetcher.get_news_from_newsapi(industry, days), 'newsapi')
+            except Exception as e:
+                print(f"    newsapi 获取失败: {e}")
             
             all_news[industry] = aggregated
             print(f"  获取到 {len(aggregated)} 条去重新闻")
