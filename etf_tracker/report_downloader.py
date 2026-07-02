@@ -176,20 +176,47 @@ class EastmoneyReportDownloader:
         
         return downloaded
     
-    def download_by_stock_list(self, stock_codes: List[str], max_reports: int = 3, days: int = 180) -> Dict[str, List[str]]:
-        """批量下载多只股票研报"""
-        results = {}
+    def download_by_stock_list(self, stock_codes: List[str], max_reports: int = 3, 
+                                days: int = 180, max_total_downloads: int = 0,
+                                time_budget: float = 0) -> Dict[str, List[str]]:
+        """
+        批量下载多只股票研报（含限速保护）
+        
+        Args:
+            stock_codes: 股票代码列表
+            max_reports: 每只股票最多下载最近几篇
+            days: 查询天数
+            max_total_downloads: 本轮最多下载新PDF数（0=不限制）
+            time_budget: 最大耗时秒数（0=不限制）
+        """
+        results = {code: [] for code in stock_codes}
+        new_downloads = 0
+        start_time = time.time()
+        
         for code in stock_codes:
+            # 限速检测
+            if max_total_downloads > 0 and new_downloads >= max_total_downloads:
+                print(f"  已达到本轮下载上限 ({max_total_downloads} 份)，停止")
+                break
+            if time_budget > 0 and (time.time() - start_time) > time_budget:
+                print(f"  已达到时间预算 ({time_budget:.0f}s)，停止")
+                break
+            
             try:
-                results[code] = self.download_by_stock(code, max_reports=max_reports, days=days)
+                files = self.download_by_stock(code, max_reports=max_reports, days=days)
+                results[code] = files
+                new_downloads += len(files)
             except Exception as e:
                 print(f"  {code} 下载异常: {e}")
                 results[code] = []
+        
         return results
 
 
 def main():
-    """主函数：下载 config.json 中 Top10 成分股的研报"""
+    """主函数：下载 config.json 中 Top10 成分股的研报（限速版本）"""
+    import time
+    t0 = time.time()
     print(f"东方财富研报下载器启动: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     downloader = EastmoneyReportDownloader()
@@ -203,10 +230,16 @@ def main():
         ]
     
     print(f"  将从配置读取 {len(stock_codes)} 只成分股的研报")
-    results = downloader.download_by_stock_list(stock_codes, max_reports=2, days=90)
+    
+    # 限速策略：最多下载 20 份新 PDF，总耗时不超过 100 秒
+    results = downloader.download_by_stock_list(
+        stock_codes, max_reports=2, days=90,
+        max_total_downloads=20, time_budget=100
+    )
     
     total = sum(len(v) for v in results.values())
-    print(f"\n下载完成: 共 {total} 份研报")
+    elapsed = time.time() - t0
+    print(f"\n下载完成: 共 {total} 份研报 (耗时 {elapsed:.1f}s)")
     for code, files in results.items():
         if files:
             print(f"  {code}: {len(files)} 份")
