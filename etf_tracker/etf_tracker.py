@@ -1674,7 +1674,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     _log_timing("5.报告生成", time.time() - t4)
     
     # 保存报告（统一按日期文件夹组织）
-    reports_dir = "/home/zhihu/etf_tracker/reports"
+    reports_dir = "/home/zhihu/daily-_tracker_analytics/reports"
     day_dir = f"{reports_dir}/{report_date}"
     os.makedirs(day_dir, exist_ok=True)
     
@@ -1696,12 +1696,12 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
     
     # 更新报告索引
     try:
-        index_path = "/home/zhihu/etf_tracker/reports/REPORT_INDEX.md"
+        index_path = "/home/zhihu/daily-_tracker_analytics/reports/REPORT_INDEX.md"
         # 从日期文件夹收集所有报告
         import glob
         date_dirs = sorted(
-            [d for d in os.listdir("/home/zhihu/etf_tracker/reports") 
-             if os.path.isdir(f"/home/zhihu/etf_tracker/reports/{d}") and len(d) == 10],
+            [d for d in os.listdir(reports_dir) 
+             if os.path.isdir(f"{reports_dir}/{d}") and len(d) == 10],
             reverse=True
         )
         
@@ -1713,7 +1713,7 @@ def run_multi_etf_daily_report(config: Config = None, deep_analysis_top_n: int =
             "|------|------|------|\n",
         ]
         for date_dir in date_dirs:
-            day_path = f"/home/zhihu/etf_tracker/reports/{date_dir}"
+            day_path = f"{reports_dir}/{date_dir}"
             files_in_folder = sorted(glob.glob(f"{day_path}/multi_etf_report_*.md"))
             if not files_in_folder:
                 continue
